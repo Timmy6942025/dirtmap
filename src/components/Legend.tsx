@@ -2,15 +2,15 @@ import { useNetwork } from '../store/NetworkContext';
 import type { LeverageCategory } from '../types';
 
 const CATEGORY_COLORS: Record<LeverageCategory, string> = {
-  Crush: '#ec4899',
-  'Past Experience': '#f97316',
-  Photo: '#ef4444',
-  Quote: '#8b5cf6',
-  Secret: '#6366f1',
-  Financial: '#10b981',
-  Relationship: '#f59e0b',
-  Career: '#06b6d4',
-  Reputation: '#a855f7',
+  Crush: '#db2777',
+  'Past Experience': '#ea580c',
+  Photo: '#e11d48',
+  Quote: '#7c3aed',
+  Secret: '#3b82f6',
+  Financial: '#059669',
+  Relationship: '#d97706',
+  Career: '#0891b2',
+  Reputation: '#9333ea',
 };
 
 export default function Legend() {
@@ -34,15 +34,15 @@ export default function Legend() {
         <div className="legend-content">
           <h4>Edge Severity</h4>
           <div className="legend-item">
-            <div className="legend-line" style={{ backgroundColor: '#eab308', height: '2px' }} />
+            <div className="legend-line" style={{ backgroundColor: '#fbbf24', height: '2px' }} />
             <span>Mild (1-2)</span>
           </div>
           <div className="legend-item">
-            <div className="legend-line" style={{ backgroundColor: '#f97316', height: '3px' }} />
+            <div className="legend-line" style={{ backgroundColor: '#fb923c', height: '3px' }} />
             <span>Moderate (3)</span>
           </div>
           <div className="legend-item">
-            <div className="legend-line" style={{ backgroundColor: '#ef4444', height: '4px' }} />
+            <div className="legend-line" style={{ backgroundColor: '#f87171', height: '4px' }} />
             <span>Severe (4-5)</span>
           </div>
 

@@ -5,7 +5,7 @@ export const mockPeople: Person[] = [
     id: 'p1',
     name: 'Alex Chen',
     initials: 'AC',
-    avatarColor: '#6366f1',
+    avatarColor: '#22d3ee',
     hasOnOthers: [
       {
         id: 'l1',

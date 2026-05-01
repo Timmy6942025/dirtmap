@@ -10,7 +10,7 @@ const FILTERS: { key: FilterType; label: string }[] = [
   { key: 'most-dangerous', label: 'Most Dangerous' },
 ];
 
-const AVATAR_COLORS = ['#6366f1', '#ec4899', '#f59e0b', '#10b981', '#8b5cf6', '#ef4444', '#06b6d4', '#f97316', '#84cc16', '#a855f7'];
+const AVATAR_COLORS = ['#22d3ee', '#ec4899', '#f59e0b', '#10b981', '#8b5cf6', '#ef4444', '#06b6d4', '#f97316', '#84cc16', '#a855f7'];
 
 export default function LeftSidebar() {
   const { state, dispatch, getFilteredPeople, getConnectionCount, getVulnerabilityScore, getDangerScore } = useNetwork();
@@ -46,19 +46,19 @@ export default function LeftSidebar() {
     if (filter === 'all') return null;
     let score = 0;
     let maxScore = 25;
-    let color = '#6366f1';
+    let color = '#22d3ee';
     if (filter === 'most-connected') {
       score = getConnectionCount(personId);
       maxScore = 8;
-      color = '#6366f1';
+      color = '#22d3ee';
     } else if (filter === 'most-vulnerable') {
       score = getVulnerabilityScore(personId);
       maxScore = 15;
-      color = '#ef4444';
+      color = '#f87171';
     } else if (filter === 'most-dangerous') {
       score = getDangerScore(personId);
       maxScore = 15;
-      color = '#f97316';
+      color = '#fb923c';
     }
     const pct = Math.min((score / maxScore) * 100, 100);
     return (

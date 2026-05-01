@@ -4,15 +4,15 @@ import type { LeverageCategory, LeverageEntry, ViewMode } from '../types';
 import { parseCategories, parseSeverity } from '../utils/parseCategories';
 
 const CATEGORY_COLORS: Record<LeverageCategory, string> = {
-  Crush: '#ec4899',
-  'Past Experience': '#f97316',
-  Photo: '#ef4444',
-  Quote: '#8b5cf6',
-  Secret: '#6366f1',
-  Financial: '#10b981',
-  Relationship: '#f59e0b',
-  Career: '#06b6d4',
-  Reputation: '#a855f7',
+  Crush: '#db2777',
+  'Past Experience': '#ea580c',
+  Photo: '#e11d48',
+  Quote: '#7c3aed',
+  Secret: '#3b82f6',
+  Financial: '#059669',
+  Relationship: '#d97706',
+  Career: '#0891b2',
+  Reputation: '#9333ea',
 };
 
 type Tab = 'has-on-others' | 'others-have-on-them';
@@ -25,7 +25,7 @@ function SeverityDots({ severity }: { severity: number }) {
           key={i}
           className={`severity-dot ${i <= severity ? 'filled' : ''}`}
           style={{
-            backgroundColor: i <= severity ? (severity >= 4 ? '#ef4444' : severity >= 3 ? '#f97316' : '#eab308') : '#2a2a4e',
+            backgroundColor: i <= severity ? (severity >= 4 ? '#f87171' : severity >= 3 ? '#fb923c' : '#fbbf24') : '#18181b',
           }}
         />
       ))}
@@ -216,7 +216,7 @@ export default function RightPanel() {
       </div>
 
       <div className="panel-ai-input">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"          stroke="#22d3ee" strokeWidth="2">
           <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
         </svg>
         <input

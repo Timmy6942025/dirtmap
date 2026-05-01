@@ -11,14 +11,14 @@ export default function TopNavBar() {
       <div className="nav-left">
         <div className="logo">
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-            <circle cx="4" cy="4" r="2.5" fill="#6366f1" />
-            <circle cx="16" cy="4" r="2.5" fill="#ec4899" />
-            <circle cx="10" cy="16" r="2.5" fill="#f59e0b" />
-            <line x1="4" y1="4" x2="16" y2="4" stroke="#6366f1" strokeWidth="1" opacity="0.5" />
-            <line x1="4" y1="4" x2="10" y2="16" stroke="#ec4899" strokeWidth="1" opacity="0.5" />
-            <line x1="16" y1="4" x2="10" y2="16" stroke="#f59e0b" strokeWidth="1" opacity="0.5" />
+            <circle cx="4" cy="4" r="2.5" fill="#22d3ee" />
+            <circle cx="16" cy="4" r="2.5" fill="#f87171" />
+            <circle cx="10" cy="16" r="2.5" fill="#fb923c" />
+            <line x1="4" y1="4" x2="16" y2="4" stroke="#22d3ee" strokeWidth="1" opacity="0.4" />
+            <line x1="4" y1="4" x2="10" y2="16" stroke="#f87171" strokeWidth="1" opacity="0.4" />
+            <line x1="16" y1="4" x2="10" y2="16" stroke="#fb923c" strokeWidth="1" opacity="0.4" />
           </svg>
-          <span className="logo-text">DirtMap</span>
+          <span className="logo-text">Dirt<span>Map</span></span>
         </div>
       </div>
 

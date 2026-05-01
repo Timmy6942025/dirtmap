@@ -15,6 +15,8 @@ interface SimNode extends d3.SimulationNodeDatum {
 interface SimLink extends d3.SimulationLinkDatum<SimNode> {
   severity: number;
   categories: string[];
+  curvature: number; // how much to arc this link
+  linkIndex: number; // which parallel link this is
 }
 
 export default function NetworkGraph() {
@@ -22,11 +24,9 @@ export default function NetworkGraph() {
   const containerRef = useRef<HTMLDivElement>(null);
   const positionCacheRef = useRef<Map<string, { x: number; y: number }>>(new Map());
 
-  const { state, dispatch, getConnectionCount } = useNetwork();
+  const { state, dispatch } = useNetwork();
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
   const { zoomRef } = useZoomContext();
-
-
 
   // Track container size
   useEffect(() => {
@@ -46,13 +46,9 @@ export default function NetworkGraph() {
   }, []);
 
   const getEdgeColor = useCallback((severity: number) => {
-    if (severity >= 4) return '#ef4444';
-    if (severity >= 3) return '#f97316';
-    return '#eab308';
-  }, []);
-
-  const getEdgeWidth = useCallback((severity: number) => {
-    return 1 + severity * 0.6;
+    if (severity >= 4) return '#f87171';
+    if (severity >= 3) return '#fb923c';
+    return '#fbbf24';
   }, []);
 
   // Build/rebuild the force simulation
@@ -65,66 +61,54 @@ export default function NetworkGraph() {
     const width = dimensions.width;
     const height = dimensions.height;
     const positionCache = positionCacheRef.current;
-
-    // Check if we have cached positions for most nodes (indicates a rebuild, not first render)
     const hasCachedPositions = positionCache.size > 0;
 
-    // Defs
+    // ── Defs ──────────────────────────────────────────
     const defs = svg.append('defs');
 
-    // Glow filter
-    const glowFilter = defs.append('filter').attr('id', 'glow');
-    glowFilter
-      .append('feGaussianBlur')
-      .attr('stdDeviation', '3')
-      .attr('result', 'coloredBlur');
-    const feMerge = glowFilter.append('feMerge');
-    feMerge.append('feMergeNode').attr('in', 'coloredBlur');
-    feMerge.append('feMergeNode').attr('in', 'SourceGraphic');
-
-    // Stronger glow for selected nodes
-    const strongGlowFilter = defs.append('filter').attr('id', 'strong-glow');
-    strongGlowFilter
-      .append('feGaussianBlur')
-      .attr('stdDeviation', '6')
-      .attr('result', 'coloredBlur');
-    const feMerge2 = strongGlowFilter.append('feMerge');
-    feMerge2.append('feMergeNode').attr('in', 'coloredBlur');
-    feMerge2.append('feMergeNode').attr('in', 'SourceGraphic');
-
-    // Grid pattern
+    // Dot grid pattern
     const gridPattern = defs
       .append('pattern')
-      .attr('id', 'grid')
-      .attr('width', 40)
-      .attr('height', 40)
+      .attr('id', 'dot-grid')
+      .attr('width', 24)
+      .attr('height', 24)
       .attr('patternUnits', 'userSpaceOnUse');
     gridPattern
-      .append('path')
-      .attr('d', 'M 40 0 L 0 0 0 40')
-      .attr('fill', 'none')
-      .attr('stroke', '#1a1a2e')
-      .attr('stroke-width', '0.5');
+      .append('circle')
+      .attr('cx', 12)
+      .attr('cy', 12)
+      .attr('r', 0.6)
+      .attr('fill', 'rgba(255,255,255,0.04)');
 
-    // Arrow markers per severity level
+    // Pulse animation for selected node
+    const pulseFilter = defs.append('filter').attr('id', 'pulse-glow');
+    pulseFilter
+      .append('feGaussianBlur')
+      .attr('stdDeviation', '4')
+      .attr('result', 'blur');
+    const feMerge = pulseFilter.append('feMerge');
+    feMerge.append('feMergeNode').attr('in', 'blur');
+    feMerge.append('feMergeNode').attr('in', 'SourceGraphic');
+
+    // Arrow markers per severity — small, subtle
     [1, 2, 3, 4, 5].forEach((sev) => {
       const color = getEdgeColor(sev);
       defs
         .append('marker')
         .attr('id', `arrow-${sev}`)
-        .attr('viewBox', '0 -5 10 10')
-        .attr('refX', 28)
+        .attr('viewBox', '0 -3 6 6')
+        .attr('refX', 30)
         .attr('refY', 0)
-        .attr('markerWidth', 6)
-        .attr('markerHeight', 6)
+        .attr('markerWidth', 4)
+        .attr('markerHeight', 4)
         .attr('orient', 'auto')
         .append('path')
-        .attr('d', 'M0,-4L8,0L0,4')
+        .attr('d', 'M0,-2L4,0L0,2')
         .attr('fill', color)
-        .attr('opacity', 0.8);
+        .attr('opacity', 0.7);
     });
 
-    // Determine which nodes are within depth range of selected node (for dimming)
+    // ── Depth calculation ─────────────────────────────
     const allPeople = state.people;
     const peopleMap = new Map(allPeople.map((p) => [p.id, p]));
     const inDepthSet = new Set<string>();
@@ -146,7 +130,7 @@ export default function NetworkGraph() {
       addReachable(state.selectedPersonId, state.networkDepth);
     }
 
-    // Build nodes — always show all, use positionCache to preserve positions
+    // ── Build nodes ────────────────────────────────────
     const nodes: SimNode[] = allPeople.map((p) => {
       const cached = positionCache.get(p.id);
       return {
@@ -162,35 +146,52 @@ export default function NetworkGraph() {
 
     const nodeMap = new Map(nodes.map((n) => [n.id, n]));
 
-    // Build links — always show all
+    // ── Build links with curvature for parallel edges ──
+    // Group links by source-target pair to compute curvature offsets
+    const linkPairs = new Map<string, number>(); // "sourceId-targetId" → count
     const links: SimLink[] = [];
+
     allPeople.forEach((person) => {
       person.hasOnOthers.forEach((entry) => {
         const source = nodeMap.get(person.id);
         const target = nodeMap.get(entry.targetId);
         if (source && target) {
+          const pairKey = [person.id, entry.targetId].sort().join('-');
+          const pairIndex = linkPairs.get(pairKey) ?? 0;
+          linkPairs.set(pairKey, pairIndex + 1);
+
+          // Determine direction: if source.id < target.id, curvature is positive; else negative
+          // This ensures bidirectional edges curve in opposite directions
+          const sameDirection = person.id < entry.targetId;
+          const curvatureBase = 0.15;
+          const curvature = sameDirection
+            ? curvatureBase + pairIndex * 0.12
+            : -(curvatureBase + pairIndex * 0.12);
+
           links.push({
             source: source,
             target: target,
             severity: entry.severity,
             categories: entry.categories,
+            curvature,
+            linkIndex: pairIndex,
           });
         }
       });
     });
 
-    // Main group with zoom
+    // ── Main group with zoom ───────────────────────────
     const g = svg.append('g');
 
-    // Grid background
+    // Dot grid background
     g.append('rect')
-      .attr('width', 4000)
-      .attr('height', 4000)
-      .attr('x', -2000)
-      .attr('y', -2000)
-      .attr('fill', 'url(#grid)');
+      .attr('width', 6000)
+      .attr('height', 6000)
+      .attr('x', -3000)
+      .attr('y', -3000)
+      .attr('fill', 'url(#dot-grid)');
 
-    // Zoom behavior
+    // ── Zoom ──────────────────────────────────────────
     const zoom = d3
       .zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.2, 4])
@@ -199,7 +200,6 @@ export default function NetworkGraph() {
       });
 
     svg.call(zoom);
-    // Register zoom handle with context so ZoomControls can access it
     zoomRef.current = {
       zoomIn: () => {
         const svgEl = svgRef.current;
@@ -221,13 +221,12 @@ export default function NetworkGraph() {
       },
     };
 
-    // Initial centering
     svg.call(
       zoom.transform,
       d3.zoomIdentity.translate(width / 2, height / 2).scale(1)
     );
 
-    // Force simulation
+    // ── Force simulation ───────────────────────────────
     const simulation = d3
       .forceSimulation<SimNode>(nodes)
       .force(
@@ -235,31 +234,31 @@ export default function NetworkGraph() {
         d3
           .forceLink<SimNode, SimLink>(links)
           .id((d) => d.id)
-          .distance(120)
-          .strength(0.5)
+          .distance(180)
+          .strength(0.4)
       )
-      .force('charge', d3.forceManyBody().strength(-400))
+      .force('charge', d3.forceManyBody().strength(-700))
       .force('center', d3.forceCenter(0, 0))
-      .force('collision', d3.forceCollide().radius(35));
+      .force('collision', d3.forceCollide().radius(55));
 
-    // If positions were cached, start with very low alpha to prevent visible re-animation
     if (hasCachedPositions) {
       simulation.alpha(0.05).restart();
     }
 
-    // Draw links
-    const link = g
+    // ── Draw links as curved paths ─────────────────────
+    const linkPath = g
       .append('g')
       .attr('class', 'links')
-      .selectAll('line')
+      .selectAll('path')
       .data(links)
-      .join('line')
+      .join('path')
+      .attr('fill', 'none')
       .attr('stroke', (d) => getEdgeColor(d.severity))
-      .attr('stroke-width', (d) => getEdgeWidth(d.severity))
+      .attr('stroke-width', (d) => 1 + d.severity * 0.4)
       .attr('marker-end', (d) => `url(#arrow-${d.severity})`)
       .attr('stroke-linecap', 'round');
 
-    // Draw node groups
+    // ── Draw nodes ─────────────────────────────────────
     const nodeGroup = g
       .append('g')
       .attr('class', 'nodes')
@@ -286,130 +285,145 @@ export default function NetworkGraph() {
           })
       );
 
-    // Node glow ring
+    // Outer ring — thin colored border
     nodeGroup
       .append('circle')
-      .attr('class', 'node-glow')
-      .attr('r', 24)
-      .attr('fill', 'none')
+      .attr('class', 'node-ring')
+      .attr('r', 22)
+      .attr('fill', 'transparent')
       .attr('stroke', (d) => d.avatarColor)
       .attr('stroke-width', 1.5)
-      .attr('stroke-opacity', 0.3)
-      .attr('filter', 'url(#glow)');
+      .attr('stroke-opacity', 0.4);
 
-    // Node background circle
+    // Inner fill — subtle tinted background
     nodeGroup
       .append('circle')
-      .attr('class', 'node-bg')
-      .attr('r', 20)
+      .attr('class', 'node-fill')
+      .attr('r', 22)
       .attr('fill', (d) => d.avatarColor)
-      .attr('fill-opacity', 0.15)
-      .attr('stroke', (d) => d.avatarColor)
-      .attr('stroke-width', 2);
+      .attr('fill-opacity', 0.08);
 
-    // Node initials text
+    // Initials text
     nodeGroup
       .append('text')
+      .attr('class', 'node-initials')
       .text((d) => d.initials)
       .attr('text-anchor', 'middle')
       .attr('dy', '0.35em')
       .attr('fill', (d) => d.avatarColor)
-      .attr('font-size', '11px')
+      .attr('font-size', '12px')
       .attr('font-weight', '600')
       .attr('font-family', "'JetBrains Mono', 'SF Mono', monospace")
       .attr('pointer-events', 'none');
 
-    // Connection count badge - single group
-    const badgeGroup = nodeGroup
-      .append('g')
-      .attr('transform', 'translate(14, -14)');
-
-    badgeGroup
-      .append('circle')
-      .attr('r', 8)
-      .attr('fill', '#1a1a2e')
-      .attr('stroke', '#2a2a4e')
-      .attr('stroke-width', 1);
-
-    badgeGroup
-      .append('text')
-      .text((d) => {
-        const count = getConnectionCount(d.id);
-        return count > 9 ? '9+' : count.toString();
-      })
-      .attr('text-anchor', 'middle')
-      .attr('dy', '0.35em')
-      .attr('fill', '#8b8ba0')
-      .attr('font-size', '7px')
-      .attr('font-weight', '600')
-      .attr('font-family', "'JetBrains Mono', 'SF Mono', monospace")
-      .attr('pointer-events', 'none');
-
-    // Node name label
+    // First name label — shown only for selected/connected nodes
     nodeGroup
       .append('text')
+      .attr('class', 'node-label')
       .text((d) => d.name.split(' ')[0])
       .attr('text-anchor', 'middle')
-      .attr('dy', '36px')
-      .attr('fill', '#8b8ba0')
+      .attr('dy', '38px')
+      .attr('fill', '#a1a1aa')
       .attr('font-size', '10px')
-      .attr('font-weight', '400')
-      .attr('font-family', "'Inter', sans-serif")
-      .attr('pointer-events', 'none');
+      .attr('font-weight', '500')
+      .attr('font-family', "'Manrope', sans-serif")
+      .attr('pointer-events', 'none')
+      .attr('opacity', 0); // hidden by default
 
-    // Click handler for node selection
+    // Hover area (invisible, larger hit target)
+    nodeGroup
+      .append('circle')
+      .attr('r', 30)
+      .attr('fill', 'transparent')
+      .attr('cursor', 'grab');
+
+    // ── Click handlers ─────────────────────────────────
     nodeGroup.on('click', (_event, d) => {
       _event.stopPropagation();
       dispatch({ type: 'SELECT_PERSON', personId: d.id });
     });
 
-    // Click on background to deselect
     svg.on('click', () => {
       dispatch({ type: 'SELECT_PERSON', personId: null });
     });
 
-    // Selection and depth dimming
+    // ── Selection state + trail animation ──────────────
     const updateVisualState = () => {
       const hasSelection = state.selectedPersonId !== null;
 
+      // Node visual state
       nodeGroup.each(function (d) {
         const isSelected = state.selectedPersonId === d.id;
         const isWithinDepth = !hasSelection || inDepthSet.has(d.id);
         const el = d3.select(this);
 
-        el.select('.node-glow')
-          .attr('stroke-opacity', isSelected ? 0.8 : isWithinDepth ? 0.3 : 0.08)
-          .attr('filter', isSelected ? 'url(#strong-glow)' : 'url(#glow)');
+        // Ring
+        el.select('.node-ring')
+          .attr('stroke-opacity', isSelected ? 1 : isWithinDepth ? 0.4 : 0.06)
+          .attr('stroke-width', isSelected ? 2.5 : 1.5)
+          .attr('filter', isSelected ? 'url(#pulse-glow)' : 'none');
 
-        el.select('.node-bg')
-          .attr('fill-opacity', isSelected ? 0.3 : isWithinDepth ? 0.15 : 0.04)
-          .attr('stroke-width', isSelected ? 3 : isWithinDepth ? 2 : 1)
-          .attr('stroke-opacity', isWithinDepth ? 1 : 0.15);
+        // Fill
+        el.select('.node-fill')
+          .attr('fill-opacity', isSelected ? 0.2 : isWithinDepth ? 0.08 : 0.02);
 
-        // All text children
-        el.selectAll('text')
-          .attr('opacity', isWithinDepth ? 1 : 0.15);
+        // Initials
+        el.select('.node-initials')
+          .attr('opacity', isWithinDepth ? 1 : 0.1);
 
-        // Badge text inside g
-        el.selectAll('g text')
-          .attr('opacity', isWithinDepth ? 1 : 0.15);
+        // Name label — show for selected + connected nodes
+        el.select('.node-label')
+          .attr('opacity', isSelected || (isWithinDepth && hasSelection) ? 1 : 0);
       });
 
-      link.attr('stroke-opacity', (d) => {
-        if (!hasSelection) return 0.6;
+      // Link visual state + animated trails for connected edges
+      linkPath.each(function (d) {
         const sourceId = (d.source as SimNode).id;
         const targetId = (d.target as SimNode).id;
-        const isConnected = sourceId === state.selectedPersonId || targetId === state.selectedPersonId;
+        const isConnected = hasSelection && (sourceId === state.selectedPersonId || targetId === state.selectedPersonId);
         const bothInDepth = inDepthSet.has(sourceId) && inDepthSet.has(targetId);
-        if (isConnected) return 0.9;
-        if (bothInDepth) return 0.4;
-        return 0.08;
+        const el = d3.select(this);
+
+        if (isConnected) {
+          // Animated trail: flowing dashes along the path
+          el.attr('stroke-opacity', 0.85)
+            .attr('stroke-dasharray', '6 4')
+            .classed('trail-active', true);
+        } else if (bothInDepth && hasSelection) {
+          el.attr('stroke-opacity', 0.25)
+            .attr('stroke-dasharray', 'none')
+            .classed('trail-active', false);
+        } else if (hasSelection) {
+          el.attr('stroke-opacity', 0.04)
+            .attr('stroke-dasharray', 'none')
+            .classed('trail-active', false);
+        } else {
+          // No selection — all edges visible, no animation
+          el.attr('stroke-opacity', 0.4)
+            .attr('stroke-dasharray', 'none')
+            .classed('trail-active', false);
+        }
       });
     };
 
     updateVisualState();
 
-    // Tick update — also cache positions
+    // ── Bézier curve path generator ─────────────────────
+    // Computes a curved path between source and target
+    const linkPathGenerator = (d: SimLink) => {
+      const source = d.source as SimNode;
+      const target = d.target as SimNode;
+      const dx = (target.x ?? 0) - (source.x ?? 0);
+      const dy = (target.y ?? 0) - (source.y ?? 0);
+      const dr = Math.max(Math.sqrt(dx * dx + dy * dy) / Math.abs(d.curvature || 0.15), 200);
+
+      // Sweep flag determines which side the curve arcs toward
+      const sweep = d.curvature > 0 ? 1 : 0;
+
+      return `M${source.x ?? 0},${source.y ?? 0}A${dr},${dr} 0 0,${sweep} ${target.x ?? 0},${target.y ?? 0}`;
+    };
+
+    // ── Tick update ────────────────────────────────────
     simulation.on('tick', () => {
       nodes.forEach((n) => {
         if (n.x != null && n.y != null) {
@@ -417,11 +431,8 @@ export default function NetworkGraph() {
         }
       });
 
-      link
-        .attr('x1', (d) => (d.source as SimNode).x ?? 0)
-        .attr('y1', (d) => (d.source as SimNode).y ?? 0)
-        .attr('x2', (d) => (d.target as SimNode).x ?? 0)
-        .attr('y2', (d) => (d.target as SimNode).y ?? 0);
+      // Update curved paths
+      linkPath.attr('d', linkPathGenerator);
 
       nodeGroup.attr('transform', (d) => `translate(${d.x ?? 0}, ${d.y ?? 0})`);
     });
@@ -430,7 +441,7 @@ export default function NetworkGraph() {
       simulation.stop();
       zoomRef.current = null;
     };
-  }, [state.people, dimensions, state.networkDepth, state.selectedPersonId, dispatch, getEdgeColor, getEdgeWidth, getConnectionCount]);
+  }, [state.people, dimensions, state.networkDepth, state.selectedPersonId, dispatch, getEdgeColor]);
 
   return (
     <div ref={containerRef} className="network-graph-container">

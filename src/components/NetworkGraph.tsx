@@ -26,25 +26,10 @@ export default function NetworkGraph() {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
   const ehRef = useRef<EdgeHandlesApi | null>(null);
-  const savedPositionsRef = useRef<Record<string, { x: number; y: number }>>({});
 
   const { state, dispatch } = useNetwork();
-  const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
   const [nodeLabelData, setNodeLabelData] = useState<Record<string, { x: number; y: number; h: number }>>({});
   const { zoomRef } = useZoomContext();
-
-  // Resize observer
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        setDimensions({ width: entry.contentRect.width, height: entry.contentRect.height });
-      }
-    });
-    observer.observe(container);
-    return () => observer.disconnect();
-  }, []);
 
   // Memoized people map
   const peopleMap = useMemo(
@@ -52,7 +37,7 @@ export default function NetworkGraph() {
     [state.people]
   );
 
-  // Compute depth set for overlay label visibility
+  // Compute depth set
   const inDepthSet = useMemo(() => {
     const s = new Set<string>();
     const selectedId = state.selectedPersonId;
@@ -70,7 +55,7 @@ export default function NetworkGraph() {
     return s;
   }, [state.selectedPersonId, state.networkDepth, peopleMap]);
 
-  // Update name overlay positions — uses renderedHeight so offset scales with zoom
+  // Update name overlay positions
   const rafIdRef = useRef<number>(0);
   const updateOverlayPositions = useCallback(() => {
     if (rafIdRef.current) return;
@@ -87,14 +72,11 @@ export default function NetworkGraph() {
     });
   }, []);
 
-  // ── Main Cytoscape setup ────────────────────────────
-  useEffect(() => {
-    if (!containerRef.current) return;
-
+  // ── Build data classification (reusable) ───────────
+  const buildData = useCallback(() => {
     const selectedId = state.selectedPersonId;
     const allPeople = state.people;
 
-    // ── Depth + connection classification ─────────────
     const localInDepthSet = new Set<string>();
     if (selectedId) {
       const addReachable = (personId: string, hopsRemaining: number) => {
@@ -124,34 +106,22 @@ export default function NetworkGraph() {
       }
     }
 
-    // ── Build Cytoscape elements ───────────────────────
-    const elements: cytoscape.ElementDefinition[] = [];
+    const pairEdgeCount = new Map<string, number>();
+    const nodeData: Record<string, any> = {};
+    const edgeData: any[] = [];
 
-    // Restore saved positions from previous instance to avoid layout jumps
-    const savedPositions = savedPositionsRef.current;
-
-    // Nodes
     allPeople.forEach((p) => {
-      const connType = selectedId ? (connectionTypeMap.get(p.id) ?? 'none') : undefined;
+      const connType = selectedId ? (connectionTypeMap.get(p.id) ?? 'none') : 'default';
       const isSel = p.id === selectedId;
       const inD = !selectedId || localInDepthSet.has(p.id);
-      const saved = savedPositions[p.id];
-      elements.push({
-        data: {
-          id: p.id,
-          initials: p.initials,
-          avatarColor: p.avatarColor,
-          connType: connType ?? 'default',
-          isSel: isSel ? 'true' : 'false',
-          inD: inD ? 'true' : 'false',
-        },
-        position: saved ? { x: saved.x, y: saved.y } : undefined,
-      });
+      nodeData[p.id] = {
+        initials: p.initials,
+        avatarColor: p.avatarColor,
+        connType,
+        isSel: isSel ? 'true' : 'false',
+        inD: inD ? 'true' : 'false',
+      };
     });
-
-    // Edges — one per hasOnOthers entry, giving natural multigraph support
-    // Cytoscape bezier + control-point-step-size separates bidirectional edges automatically
-    const pairEdgeCount = new Map<string, number>();
 
     allPeople.forEach((person) => {
       person.hasOnOthers.forEach((entry) => {
@@ -159,8 +129,7 @@ export default function NetworkGraph() {
         const edgeIdx = pairEdgeCount.get(pairKey) ?? 0;
         pairEdgeCount.set(pairKey, edgeIdx + 1);
 
-        // Determine direction for coloring
-        let direction: string = 'default';
+        let direction = 'default';
         if (selectedId) {
           if (person.id === selectedId) direction = 'outgoing';
           else if (entry.targetId === selectedId) direction = 'incoming';
@@ -169,253 +138,222 @@ export default function NetworkGraph() {
         const bothInD = localInDepthSet.has(person.id) && localInDepthSet.has(entry.targetId);
         const isConnected = selectedId !== null && (person.id === selectedId || entry.targetId === selectedId);
 
-        elements.push({
-          data: {
-            id: `${person.id}->${entry.targetId}-${edgeIdx}`,
-            source: person.id,
-            target: entry.targetId,
-            severity: entry.severity,
-            direction,
-            isConnected: isConnected ? 'true' : 'false',
-            bothInD: bothInD ? 'true' : 'false',
-            hasSel: selectedId ? 'true' : 'false',
-          },
+        edgeData.push({
+          id: `${person.id}->${entry.targetId}-${edgeIdx}`,
+          source: person.id,
+          target: entry.targetId,
+          severity: entry.severity,
+          direction,
+          isConnected: isConnected ? 'true' : 'false',
+          bothInD: bothInD ? 'true' : 'false',
+          hasSel: selectedId ? 'true' : 'false',
         });
       });
     });
 
-    // ── Cytoscape stylesheet ───────────────────────────
-    const stylesheet: any[] = [
-      // ── Node styles ──
-      {
-        selector: 'node',
-        style: {
-          'label': 'data(initials)',
-          'text-valign': 'center',
-          'text-halign': 'center',
-          'font-size': '14px',
-          'font-weight': 700,
-          'font-family': "'JetBrains Mono', 'SF Mono', monospace",
-          'color': 'data(avatarColor)',
-          'text-opacity': 1,
-          'background-color': '#0f0f11',
-          'background-opacity': 1,
-          'border-width': 2,
-          'border-color': 'data(avatarColor)',
-          'border-opacity': 0.5,
-          'width': 52,
-          'height': 52,
-          'text-outline-width': 0,
-          'overlay-padding': 10,
-          'transition-property': 'border-opacity, border-width, background-color, text-opacity',
-          'transition-duration': '0.2s',
-        },
-      },
-      // Hover — brighter border and fill
-      {
-        selector: 'node:hover',
-        style: {
-          'border-opacity': 0.9,
-          'border-width': 3,
-          'background-color': '#18181b',
-        },
-      },
-      // Selected node — thicker border, glow effect
-      {
-        selector: 'node[isSel = "true"]',
-        style: {
-          'border-width': 3,
-          'border-opacity': 1,
-          'background-color': '#18181b',
-          'text-opacity': 1,
-          'z-index': 10,
-        },
-      },
-      // Nodes outside depth set — faded
-      {
-        selector: 'node[inD = "false"]',
-        style: {
-          'border-opacity': 0.08,
-          'background-opacity': 0.15,
-          'text-opacity': 0.15,
-        },
-      },
-      // Connection type encoding
-      {
-        selector: 'node[connType = "outgoing"]',
-        style: {
-          'border-color': '#22d3ee',
-          'border-opacity': 0.8,
-          'text-opacity': 1,
-        },
-      },
-      {
-        selector: 'node[connType = "incoming"]',
-        style: {
-          'border-color': '#f87171',
-          'border-opacity': 0.7,
-          'text-opacity': 1,
-        },
-      },
-      {
-        selector: 'node[connType = "bidirectional"]',
-        style: {
-          'border-color': '#a78bfa',
-          'border-opacity': 0.8,
-          'text-opacity': 1,
-        },
-      },
+    return { nodeData, edgeData, hasSel: !!selectedId };
+  }, [state.selectedPersonId, state.networkDepth, state.people, peopleMap]);
 
-      // ── Edge styles ──
-      {
-        selector: 'edge',
-        style: {
-          'curve-style': 'bezier',
-          'control-point-step-size': 40,
-          'width': 1.5,
-          'line-color': '#fbbf24',
-          'line-opacity': 0.55,
-          'target-arrow-shape': 'triangle',
-          'target-arrow-color': '#fbbf24',
-          'arrow-scale': 1.3,
-          'source-arrow-shape': 'none',
-          'transition-property': 'line-color, line-opacity, width',
-          'transition-duration': '0.2s',
-        },
-      },
-      // Severity-based edge coloring
-      {
-        selector: 'edge[severity >= 4]',
-        style: {
-          'line-color': '#f87171',
-          'target-arrow-color': '#f87171',
-          'width': 3,
-        },
-      },
-      {
-        selector: 'edge[severity >= 3]',
-        style: {
-          'line-color': '#fb923c',
-          'target-arrow-color': '#fb923c',
-          'width': 2.5,
-        },
-      },
-      // Outgoing edges from selected node — cyan, dashed marching ants
-      {
-        selector: 'edge[direction = "outgoing"]',
-        style: {
-          'line-color': '#22d3ee',
-          'target-arrow-color': '#22d3ee',
-          'line-opacity': 0.9,
-          'width': 3,
-          'line-style': 'dashed',
-          'line-dash-pattern': [10, 5],
-        },
-      },
-      // Incoming edges to selected node — red, dashed marching ants
-      {
-        selector: 'edge[direction = "incoming"]',
-        style: {
-          'line-color': '#f87171',
-          'target-arrow-color': '#f87171',
-          'line-opacity': 0.75,
-          'width': 2.5,
-          'line-style': 'dashed',
-          'line-dash-pattern': [5, 8],
-        },
-      },
-      // Connected but not directly outgoing/incoming (depth-2+ edges) — only when a node is selected
-      {
-        selector: 'edge[hasSel = "true"][isConnected = "true"][direction = "default"]',
-        style: {
-          'line-opacity': 0.25,
-        },
-      },
-      // Both endpoints in depth set, not directly connected to selected — only dim when selected
-      {
-        selector: 'edge[hasSel = "true"][bothInD = "true"][isConnected = "false"]',
-        style: {
-          'line-opacity': 0.15,
-        },
-      },
-      // Edges outside depth set — nearly invisible, only when a node is selected
-      {
-        selector: 'edge[hasSel = "true"][bothInD = "false"][isConnected = "false"]',
-        style: {
-          'line-opacity': 0.04,
-          'target-arrow-opacity': 0.04,
-        },
-      },
+  // ── Stylesheet ─────────────────────────────────────
+  const buildStylesheet = useCallback((hasSel: boolean) => {
+    const dimRule = hasSel ? `
+      edge[hasSel='true'][isConnected='true'][direction='default'] {
+        line-opacity: 0.25;
+      }
+      edge[hasSel='true'][bothInD='true'][isConnected='false'] {
+        line-opacity: 0.15;
+      }
+      edge[hasSel='true'][bothInD='false'][isConnected='false'] {
+        line-opacity: 0.04;
+        target-arrow-opacity: 0.04;
+      }
+    ` : '';
 
-      // ── Edgehandles styles ──
-      {
-        selector: '.eh-handle',
-        style: {
-          'background-color': '#22d3ee',
-          'width': 12,
-          'height': 12,
-          'border-width': 0,
-          'label': '',
-        },
-      },
-      {
-        selector: '.eh-preview',
-        style: {
-          'line-color': '#22d3ee',
-          'line-opacity': 0.5,
-          'target-arrow-color': '#22d3ee',
-          'line-style': 'dashed',
-        },
-      },
-    ];
+    return `
+      node {
+        label: data(initials);
+        text-valign: center;
+        text-halign: center;
+        font-size: 14px;
+        font-weight: 700;
+        font-family: 'JetBrains Mono', 'SF Mono', monospace;
+        color: data(avatarColor);
+        text-opacity: 1;
+        background-color: #0f0f11;
+        background-opacity: 1;
+        border-width: 2;
+        border-color: data(avatarColor);
+        border-opacity: 0.5;
+        width: 52;
+        height: 52;
+        text-outline-width: 0;
+        overlay-padding: 10;
+        transition-property: border-opacity, border-width, background-color, text-opacity;
+        transition-duration: 0.2s;
+      }
+      node:hover {
+        border-opacity: 0.9;
+        border-width: 3;
+        background-color: #18181b;
+      }
+      node[isSel='true'] {
+        border-width: 3;
+        border-opacity: 1;
+        background-color: #18181b;
+        text-opacity: 1;
+        z-index: 10;
+      }
+      node[inD='false'] {
+        border-opacity: 0.08;
+        background-opacity: 0.15;
+        text-opacity: 0.15;
+      }
+      node[connType='outgoing'] {
+        border-color: #22d3ee;
+        border-opacity: 0.8;
+        text-opacity: 1;
+      }
+      node[connType='incoming'] {
+        border-color: #f87171;
+        border-opacity: 0.7;
+        text-opacity: 1;
+      }
+      node[connType='bidirectional'] {
+        border-color: #a78bfa;
+        border-opacity: 0.8;
+        text-opacity: 1;
+      }
+      edge {
+        curve-style: bezier;
+        control-point-step-size: 40;
+        width: 1.5;
+        line-color: #fbbf24;
+        line-opacity: 0.55;
+        target-arrow-shape: triangle;
+        target-arrow-color: #fbbf24;
+        arrow-scale: 1.3;
+        source-arrow-shape: none;
+        transition-property: line-color, line-opacity, width;
+        transition-duration: 0.2s;
+      }
+      edge[severity >= 4] {
+        line-color: #f87171;
+        target-arrow-color: #f87171;
+        width: 3;
+      }
+      edge[severity >= 3] {
+        line-color: #fb923c;
+        target-arrow-color: #fb923c;
+        width: 2.5;
+      }
+      edge[direction='outgoing'] {
+        line-color: #22d3ee;
+        target-arrow-color: #22d3ee;
+        line-opacity: 0.9;
+        width: 3;
+        line-style: dashed;
+        line-dash-pattern: 10 5;
+      }
+      edge[direction='incoming'] {
+        line-color: #f87171;
+        target-arrow-color: #f87171;
+        line-opacity: 0.75;
+        width: 2.5;
+        line-style: dashed;
+        line-dash-pattern: 5 8;
+      }
+      ${dimRule}
+      .eh-handle {
+        background-color: #22d3ee;
+        width: 12;
+        height: 12;
+        border-width: 0;
+        label: '';
+      }
+      .eh-preview {
+        line-color: #22d3ee;
+        line-opacity: 0.5;
+        target-arrow-color: #22d3ee;
+        line-style: dashed;
+      }
+    `;
+  }, []);
 
-    // ── Determine layout ──────────────────────────────
-    // Always use the intended layout (fcose/concentric) but seed positions from savedPositions
-    // so the layout converges quickly from previous positions, avoiding layout jumps
-    // while still producing the correct layout for the current mode.
-    const hasSavedPositions = Object.keys(savedPositions).length > 0;
+  // ── Layout options ─────────────────────────────────
+  const buildLayoutOpts = useCallback((cy: cytoscape.Core, selectedId: string | null) => {
+    const currentPositions = cy.nodes().map((n) => ({
+      id: n.id(),
+      x: n.position().x,
+      y: n.position().y,
+    }));
+    const hasPositions = currentPositions.length > 0 && currentPositions.some((p) => p.x !== 0 || p.y !== 0);
 
-    const layoutOpts: any = {
-      name: selectedId ? 'concentric' : 'fcose',
-      quality: 'default',
-      randomize: !hasSavedPositions, // only randomize on first render
+    const layoutName = selectedId ? 'concentric' : 'fcose';
+
+    const base = {
+      name: layoutName,
+      quality: 'default' as const,
       animate: true,
-      animationDuration: hasSavedPositions ? 300 : 600, // faster when re-positioning
+      animationDuration: hasPositions ? 400 : 700,
       animationEasing: 'ease-in-out-cubic',
       fit: true,
       padding: 50,
-      // fcose-specific
-      ...(selectedId
-        ? {}
-        : {
-            nodeRepulsion: () => 45000,
-            idealEdgeLength: () => 250,
-            nodeSeparation: 200,
-          }),
-      // concentric-specific
-      ...(selectedId
-        ? {
-            concentric: (node: any) => {
-              if (node.data('id') === selectedId) return 10;
-              const conn = node.data('connType');
-              if (conn === 'bidirectional') return 7;
-              if (conn === 'outgoing' || conn === 'incoming') return 5;
-              if (localInDepthSet.has(node.data('id'))) return 3;
-              return 1;
-            },
-            levelWidth: (nodes: any) => nodes.length / 4,
-            spacingFactor: 1.2,
-            startAngle: -Math.PI / 2,
-          }
-        : {}),
     };
 
-    // ── Create Cytoscape instance ──────────────────────
+    if (selectedId) {
+      return {
+        ...base,
+        concentric: (node: cytoscape.NodeSingular) => {
+          if (node.data('id') === selectedId) return 10;
+          const conn = node.data('connType');
+          if (conn === 'bidirectional') return 7;
+          if (conn === 'outgoing' || conn === 'incoming') return 5;
+          if (node.data('inD') === 'true') return 3;
+          return 1;
+        },
+        levelWidth: (nodes: cytoscape.Collection) => Math.max(1, nodes.length / 5),
+        spacingFactor: 2.0,
+        startAngle: -Math.PI / 2,
+        sort: (a: cytoscape.NodeSingular, b: cytoscape.NodeSingular) => {
+          // Keep selected node at the center
+          if (a.data('id') === selectedId) return -1;
+          if (b.data('id') === selectedId) return 1;
+          // Sort remaining by concentric level
+          return (b.data('connType') === 'bidirectional' ? 1 : 0) - (a.data('connType') === 'bidirectional' ? 1 : 0);
+        },
+      };
+    } else {
+      return {
+        ...base,
+        nodeRepulsion: () => 45000,
+        idealEdgeLength: () => 250,
+        nodeSeparation: 200,
+      };
+    }
+  }, []);
+
+  // ── Initialize Cytoscape once ──────────────────────
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const { nodeData, edgeData, hasSel } = buildData();
+    const stylesheet = buildStylesheet(hasSel);
+
+    const elements: cytoscape.ElementDefinition[] = [];
+
+    state.people.forEach((p) => {
+      elements.push({ data: { id: p.id, ...nodeData[p.id] } });
+    });
+
+    edgeData.forEach((e) => {
+      elements.push({ data: e });
+    });
+
     const cy = cytoscape({
-      container: containerRef.current,
+      container,
       elements,
-      style: stylesheet,
-      layout: layoutOpts,
+      style: stylesheet as any,
       minZoom: 0.2,
       maxZoom: 4,
       wheelSensitivity: 0.3,
@@ -424,12 +362,27 @@ export default function NetworkGraph() {
 
     cyRef.current = cy;
 
-    // ── Edgehandles (disabled by default, activated via Shift key) ──
+    // Initial layout
+    const initialLayout = cy.layout({
+      name: 'fcose',
+      quality: 'default',
+      randomize: true,
+      animate: true,
+      animationDuration: 700,
+      animationEasing: 'ease-in-out-cubic',
+      fit: true,
+      padding: 50,
+      nodeRepulsion: () => 45000,
+      idealEdgeLength: () => 250,
+      nodeSeparation: 200,
+    } as any);
+    initialLayout.run();
+    initialLayout.one('layoutstop', () => updateOverlayPositions());
+
+    // Edgehandles
     const eh = cy.edgehandles({
       enabled: false,
-      canConnect: (sourceNode: any, targetNode: any) => {
-        return sourceNode.id() !== targetNode.id();
-      },
+      canConnect: (sourceNode: any, targetNode: any) => sourceNode.id() !== targetNode.id(),
       edgeParams: () => ({
         data: {
           severity: 1,
@@ -445,11 +398,10 @@ export default function NetworkGraph() {
       snapFrequency: 50,
       noEdgeEventsInDraw: true,
       disableBrowserGestures: true,
-    });
-
+    } as any);
     ehRef.current = eh;
 
-    // Toggle edgehandles with Shift key
+    // Shift key toggle
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Shift' && ehRef.current) ehRef.current.enableDrawMode();
     };
@@ -459,7 +411,7 @@ export default function NetworkGraph() {
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
 
-    // Persist edges created via edgehandles to the store
+    // ehcomplete → store
     cy.on('ehcomplete', (_evt: any, sourceNode: any, targetNode: any, addedEdge: any) => {
       if (addedEdge) {
         dispatch({
@@ -473,7 +425,7 @@ export default function NetworkGraph() {
       }
     });
 
-    // ── Register zoom controls ─────────────────────────
+    // Zoom controls
     zoomRef.current = {
       zoomIn: () => {
         cy.zoom({ level: Math.min(cy.zoom() * 1.4, 4), renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } });
@@ -486,29 +438,23 @@ export default function NetworkGraph() {
       },
     };
 
-    // ── Node click → select person ─────────────────────
+    // Node click → select
     cy.on('tap', 'node', (evt) => {
-      const nodeId = evt.target.id();
-      dispatch({ type: 'SELECT_PERSON', personId: nodeId });
+      dispatch({ type: 'SELECT_PERSON', personId: evt.target.id() });
     });
 
-    // Click background → deselect
+    // Background tap → deselect
     cy.on('tap', (evt) => {
       if (evt.target === cy) {
         dispatch({ type: 'SELECT_PERSON', personId: null });
       }
     });
 
-    // ── Update overlay positions on viewport/position changes ──
+    // Overlay position updates
     cy.on('viewport dragfree', () => updateOverlayPositions());
-    // Also update during layout animation
     const layoutInterval = setInterval(() => updateOverlayPositions(), 50);
-    cy.one('layoutstop', () => {
-      clearInterval(layoutInterval);
-      updateOverlayPositions();
-    });
 
-    // ── Animated marching-ant dash offset ──────────────
+    // Marching ants animation
     let dashOffset = 0;
     const animInterval = setInterval(() => {
       dashOffset -= 1;
@@ -520,16 +466,8 @@ export default function NetworkGraph() {
       });
     }, 50);
 
-    // ── Cleanup ────────────────────────────────────────
+    // Cleanup
     return () => {
-      // Save node positions before destroying to preserve layout across re-renders
-      const positions: Record<string, { x: number; y: number }> = {};
-      cy.nodes().forEach((node) => {
-        const pos = node.position();
-        positions[node.id()] = { x: pos.x, y: pos.y };
-      });
-      savedPositionsRef.current = positions;
-
       clearInterval(animInterval);
       clearInterval(layoutInterval);
       window.removeEventListener('keydown', onKeyDown);
@@ -541,7 +479,87 @@ export default function NetworkGraph() {
       ehRef.current = null;
       zoomRef.current = null;
     };
-  }, [state.people, dimensions, state.networkDepth, state.selectedPersonId, dispatch, peopleMap, updateOverlayPositions]);
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Initialize once — never recreates
+
+  // ── In-place update when state changes ─────────────
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+
+    const { nodeData, edgeData, hasSel } = buildData();
+    const stylesheet = buildStylesheet(hasSel);
+
+    // Get current positions before any changes
+    const currentPositions = new Map<string, { x: number; y: number }>();
+    cy.nodes().forEach((n) => {
+      const p = n.position();
+      currentPositions.set(n.id(), { x: p.x, y: p.y });
+    });
+
+    // Update existing nodes — preserve positions, update data
+    cy.nodes().forEach((node) => {
+      const id = node.id();
+      const data = nodeData[id];
+      if (data) {
+        node.data(data);
+      } else {
+        // Node no longer exists — remove
+        node.remove();
+      }
+    });
+
+    // Add new nodes that don't exist yet
+    state.people.forEach((p) => {
+      if (!cy.getElementById(p.id).length) {
+        const pos = currentPositions.get(p.id);
+        cy.add({
+          group: 'nodes',
+          data: { id: p.id, ...nodeData[p.id] },
+          position: pos ? { x: pos.x, y: pos.y } : undefined,
+        });
+      }
+    });
+
+    // Build set of new edge IDs
+    const newEdgeIds = new Set(edgeData.map((e) => e.id));
+
+    // Remove edges that no longer exist
+    cy.edges().forEach((edge) => {
+      if (!newEdgeIds.has(edge.id())) {
+        edge.remove();
+      }
+    });
+
+    // Add or update edges
+    edgeData.forEach((e) => {
+      const existing = cy.getElementById(e.id);
+      if (existing.length) {
+        existing.data(e);
+      } else {
+        cy.add({ group: 'edges', data: e });
+      }
+    });
+
+    // Update stylesheet
+    cy.style().fromString(stylesheet).update();
+
+    // Re-run layout from current positions (no destroy/recreate)
+    const layoutOpts = buildLayoutOpts(cy, state.selectedPersonId);
+    const layout = cy.layout(layoutOpts as any);
+
+    // Update overlay during animation
+    const updateInterval = setInterval(() => updateOverlayPositions(), 50);
+    layout.one('layoutstop', () => {
+      clearInterval(updateInterval);
+      updateOverlayPositions();
+    });
+    layout.run();
+
+  }, [state.people, state.networkDepth, state.selectedPersonId, dispatch, buildData, buildStylesheet, buildLayoutOpts, updateOverlayPositions]);
+
+
 
   const selectedId = state.selectedPersonId;
 
@@ -564,7 +582,7 @@ export default function NetworkGraph() {
               className="node-name-label"
               style={{
                 left: nd.x,
-                top: nd.y + nd.h / 2 + 6, // scales with zoom since renderedHeight scales
+                top: nd.y + nd.h / 2 + 6,
                 opacity: showLabel ? (selectedId ? 0.85 : 0.75) : 0,
               }}
             >
@@ -574,7 +592,7 @@ export default function NetworkGraph() {
         })}
       </div>
 
-      {/* Direction legend — shown when a node is selected */}
+      {/* Direction legend */}
       {selectedId && (
         <div className="direction-legend">
           <div className="legend-row">

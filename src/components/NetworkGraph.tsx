@@ -203,22 +203,9 @@ export default function NetworkGraph() {
   }, [state.selectedPersonId, state.selectedEdgeId, state.networkDepth, state.people]);
 
   // ── Stylesheet ─────────────────────────────────────
-  // Color layering: direction sets base style, severity colors override on top for default-direction edges.
+  // Color layering: severity colors for default-direction edges; direction colors (outgoing/incoming) override on top.
   // Selected edge gets glow highlight. Parallel edges spread via control-point-offset.
-  const buildStylesheet = useCallback((hasSel: boolean) => {
-    const dimRule = hasSel ? `
-      edge[hasSel='true'][direction='default'][isConnected='true'] {
-        line-opacity: 0.25;
-      }
-      edge[hasSel='true'][direction='default'][bothInD='true'][isConnected='false'] {
-        line-opacity: 0.15;
-      }
-      edge[hasSel='true'][direction='default'][bothInD='false'][isConnected='false'] {
-        line-opacity: 0.04;
-        target-arrow-opacity: 0.04;
-      }
-    ` : '';
-
+  const buildStylesheet = useCallback(() => {
     return `
       node {
         label: data(initials);
@@ -279,7 +266,7 @@ export default function NetworkGraph() {
         control-point-step-size: 40;
         width: 1.5;
         line-color: #fbbf24;
-        line-opacity: 0.55;
+        line-opacity: 0.75;
         target-arrow-shape: triangle;
         target-arrow-color: #fbbf24;
         arrow-scale: 1.3;
@@ -288,7 +275,7 @@ export default function NetworkGraph() {
         transition-duration: 0.2s;
         z-index: 1;
       }
-      /* ── Severity colors (override base, for direction='default' only) ── */
+      /* ── Severity colors (for direction='default' edges) ── */
       edge[direction='default'][severity >= 5] {
         line-color: #ef4444;
         target-arrow-color: #ef4444;
@@ -313,7 +300,7 @@ export default function NetworkGraph() {
         line-color: #94a3b8;
         target-arrow-color: #94a3b8;
         width: 1.5;
-        line-opacity: 0.4;
+        line-opacity: 0.65;
       }
       /* ── Direction colors (override severity for outgoing/incoming) ── */
       edge[direction='outgoing'] {
@@ -327,14 +314,14 @@ export default function NetworkGraph() {
       edge[direction='incoming'] {
         line-color: #f87171;
         target-arrow-color: #f87171;
-        line-opacity: 0.75;
+        line-opacity: 0.85;
         width: 2.5;
         line-style: dashed;
         line-dash-pattern: 5 8;
       }
       /* ── Selected edge highlight ── */
       edge[isSelected='true'] {
-        width: 4;
+        width: 5;
         line-opacity: 1;
         z-index: 100;
         border-width: 2;
@@ -349,7 +336,7 @@ export default function NetworkGraph() {
         line-color: #fca5a5;
         target-arrow-color: #fca5a5;
       }
-      /* ── Parallel edge offset: spread multiple edges between the same nodes ── */
+      /* ── Parallel edge offset ── */
       edge[totalParallel='1'] {
         control-point-offset: 0;
       }
@@ -380,7 +367,6 @@ export default function NetworkGraph() {
       edge[totalParallel='4'][edgeIndex='3'] {
         control-point-offset: 50;
       }
-      ${dimRule}
       .eh-handle {
         background-color: #22d3ee;
         width: 12;
@@ -402,8 +388,8 @@ export default function NetworkGraph() {
     const container = containerRef.current;
     if (!container) return;
 
-    const { nodeData, edgeData, hasSel } = buildData();
-    const stylesheet = buildStylesheet(hasSel);
+    const { nodeData, edgeData } = buildData();
+    const stylesheet = buildStylesheet();
 
     const elements: cytoscape.ElementDefinition[] = [];
 
@@ -552,8 +538,8 @@ export default function NetworkGraph() {
     const cy = cyRef.current;
     if (!cy) return;
 
-    const { nodeData, edgeData, hasSel } = buildData();
-    const stylesheet = buildStylesheet(hasSel);
+    const { nodeData, edgeData } = buildData();
+    const stylesheet = buildStylesheet();
 
     // Get current positions before any changes
     const currentPositions = new Map<string, { x: number; y: number }>();
@@ -610,12 +596,19 @@ export default function NetworkGraph() {
     // Nodes stay exactly where they are, only visual dimming changes
     cy.style().fromString(stylesheet).update();
 
-    // Edge tap → inspect. Registered here (not in init effect) so it sees the current
-    // state.selectedEdgeId without stale closure.
+    // Edge tap → focus the connector. Auto-selects the source person so RightPanel shows
+    // their full profile, and highlights the specific entry.
     cy.off('tap', 'edge');
     cy.on('tap', 'edge', (evt) => {
       const edgeId = evt.target.id();
-      dispatch({ type: 'SELECT_EDGE', edgeId: state.selectedEdgeId === edgeId ? null : edgeId });
+      const sourceId = evt.target.data('source');
+      // Toggle off if already selected, otherwise select the source person AND the edge
+      if (state.selectedEdgeId === edgeId) {
+        dispatch({ type: 'SELECT_EDGE', edgeId: null });
+      } else {
+        dispatch({ type: 'SELECT_PERSON', personId: sourceId });
+        dispatch({ type: 'SELECT_EDGE', edgeId });
+      }
     });
 
     // Update overlay labels immediately so new selection's name appears without drag

@@ -31,105 +31,19 @@ function SeverityDots({ severity }: { severity: number }) {
   );
 }
 
-// Find a leverage entry by scanning all people
-function findEntry(people: { id: string; name: string; avatarColor: string; initials: string; hasOnOthers: LeverageEntry[] }[], entryId: string) {
-  for (const p of people) {
-    const entry = p.hasOnOthers.find((e) => e.id === entryId);
-    if (entry) return { entry, sourcePerson: p };
-  }
-  return null;
-}
-
-function EdgeDetailCard({ entryId, people, getPersonById, onClose }: { entryId: string; people: { id: string; name: string; avatarColor: string; initials: string; hasOnOthers: LeverageEntry[] }[]; getPersonById: (id: string) => { name: string; avatarColor: string; initials: string } | undefined; onClose: () => void }) {
-  const found = findEntry(people, entryId);
-  if (!found) return null;
-
-  const { entry, sourcePerson } = found;
-  const targetPerson = getPersonById(entry.targetId);
-
-  return (
-    <div className={`edge-detail-card`}>
-      <div className={`edge-detail-header`}>
-        <div className={`edge-detail-title`}>
-          <svg width={`14`} height={`14`} viewBox={`0 0 24 24`} fill={`none`} stroke={`currentColor`} strokeWidth={`2`}>
-            <line x1={`5`} y1={`12`} x2={`19`} y2={`12`} />
-            <polyline points={`12 5 19 12 12 19`} />
-          </svg>
-          Connector Detail
-        </div>
-        <button className={`edge-detail-close`} onClick={onClose} title={`Close`}>
-          <svg width={`14`} height={`14`} viewBox={`0 0 24 24`} fill={`none`} stroke={`currentColor`} strokeWidth={`2`}>
-            <line x1={`18`} y1={`6`} x2={`6`} y2={`18`} />
-            <line x1={`6`} y1={`6`} x2={`18`} y2={`18`} />
-          </svg>
-        </button>
-      </div>
-
-      <div className={`edge-detail-parties`}>
-        <div className={`edge-party`}>
-          <div
-            className={`leverage-avatar-tiny`}
-            style={{ backgroundColor: sourcePerson.avatarColor + '22', color: sourcePerson.avatarColor, borderColor: sourcePerson.avatarColor }}
-          >
-            {sourcePerson.initials}
-          </div>
-          <span>{sourcePerson.name}</span>
-          <span className={`edge-party-role`}>has dirt on</span>
-        </div>
-        <div className={`edge-arrow`}>
-          <svg width={`16`} height={`16`} viewBox={`0 0 24 24`} fill={`none`} stroke={`currentColor`} strokeWidth={`2`}>
-            <line x1={`5`} y1={`12`} x2={`19`} y2={`12`} />
-            <polyline points={`12 5 19 12 12 19`} />
-          </svg>
-        </div>
-        <div className={`edge-party`}>
-          {targetPerson && (
-            <div
-              className={`leverage-avatar-tiny`}
-              style={{ backgroundColor: targetPerson.avatarColor + '22', color: targetPerson.avatarColor, borderColor: targetPerson.avatarColor }}
-            >
-              {targetPerson.initials}
-            </div>
-          )}
-          <span>{targetPerson?.name ?? 'Unknown'}</span>
-        </div>
-      </div>
-
-      <div className={`edge-detail-body`}>
-        <div className={`edge-detail-severity`}>
-          <span className={`edge-detail-label`}>Severity</span>
-          <SeverityDots severity={entry.severity} />
-        </div>
-
-        <div className={`edge-detail-categories`}>
-          {entry.categories.map((cat) => (
-            <span
-              key={cat}
-              className={`category-pill`}
-              style={{ backgroundColor: CATEGORY_COLORS[cat] + '22', color: CATEGORY_COLORS[cat], borderColor: CATEGORY_COLORS[cat] + '44' }}
-            >
-              {cat}
-            </span>
-          ))}
-        </div>
-
-        <div className={`edge-detail-notes`}>
-          <p>{entry.notes}</p>
-          <span className={`leverage-date`}>{entry.createdAt}</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function LeverageEntryCard({ entry, viewMode, getPersonById, sourcePerson }: { entry: LeverageEntry; viewMode: ViewMode; getPersonById: (id: string) => { name: string; avatarColor: string; initials: string } | undefined; sourcePerson?: { name: string; avatarColor: string; initials: string } }) {
+function LeverageEntryCard({ entry, viewMode, getPersonById, sourcePerson, isHighlighted, onSelect }: { entry: LeverageEntry; viewMode: ViewMode; getPersonById: (id: string) => { name: string; avatarColor: string; initials: string } | undefined; sourcePerson?: { name: string; avatarColor: string; initials: string }; isHighlighted?: boolean; onSelect?: () => void }) {
   // For incoming entries, sourcePerson is the person who has dirt on the selected person.
   // For outgoing entries, we show the target (the person they have dirt on).
   const person = sourcePerson ?? getPersonById(entry.targetId);
   if (!person) return null;
 
   return (
-    <div className={`leverage-entry`}>
+    <div
+      className={`leverage-entry ${isHighlighted ? 'highlighted' : ''}`}
+      onClick={onSelect}
+      style={{ cursor: onSelect ? 'pointer' : undefined }}
+    >
+      {isHighlighted && <div className={`entry-highlight-bar`} />}
       <div className={`leverage-entry-header`}>
         <div className={`leverage-entry-person`}>
           <div
@@ -264,14 +178,18 @@ export default function RightPanel() {
         </button>
       </div>
 
-      {/* Edge detail card — shown when an edge is selected in the graph */}
+      {/* Edge detail card — shown when a connector is selected in the graph */}
       {state.selectedEdgeId && (
-        <EdgeDetailCard
-          entryId={state.selectedEdgeId}
-          people={state.people}
-          getPersonById={getPersonById}
-          onClose={() => dispatch({ type: 'SELECT_EDGE', edgeId: null })}
-        />
+        <div className={`edge-focus-banner`} onClick={() => dispatch({ type: 'SELECT_EDGE', edgeId: null })}>
+          <svg width={`12`} height={`12`} viewBox={`0 0 24 24`} fill={`none`} stroke={`currentColor`} strokeWidth={`2`}>
+            <line x1={`5`} y1={`12`} x2={`19`} y2={`12`} />
+            <polyline points={`12 5 19 12 12 19`} />
+          </svg>
+          <span>Focusing on a connector</span>
+          <button className={`edge-focus-clear`} onClick={(e) => { e.stopPropagation(); dispatch({ type: 'SELECT_EDGE', edgeId: null }); }}>
+            ×
+          </button>
+        </div>
       )}
 
       <div className={`panel-tabs`}>
@@ -298,7 +216,16 @@ export default function RightPanel() {
               <div className={`empty-state`}>No leverage entries</div>
             ) : (
               person.hasOnOthers.map((entry) => (
-                <LeverageEntryCard key={entry.id} entry={entry} viewMode={state.viewMode} getPersonById={getPersonById} />
+                <LeverageEntryCard
+                  key={entry.id}
+                  entry={entry}
+                  viewMode={state.viewMode}
+                  getPersonById={getPersonById}
+                  isHighlighted={state.selectedEdgeId === entry.id}
+                  onSelect={() => {
+                    dispatch({ type: 'SELECT_EDGE', edgeId: state.selectedEdgeId === entry.id ? null : entry.id });
+                  }}
+                />
               ))
             )}
           </>
@@ -320,6 +247,10 @@ export default function RightPanel() {
                           viewMode={state.viewMode}
                           getPersonById={getPersonById}
                           sourcePerson={source}
+                          isHighlighted={state.selectedEdgeId === entry.id}
+                          onSelect={() => {
+                            dispatch({ type: 'SELECT_EDGE', edgeId: state.selectedEdgeId === entry.id ? null : entry.id });
+                          }}
                         />
                       );
                     })

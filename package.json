@@ -12,6 +12,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@openrouter/sdk": "^0.12.24",
     "cors": "^2.8.5",
     "cytoscape": "^3.33.3",
     "cytoscape-edgehandles": "^4.0.1",

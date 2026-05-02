@@ -7,6 +7,7 @@ interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   text: string;
+  reasoning?: string;
   timestamp: Date;
 }
 
@@ -102,6 +103,7 @@ Example action: ACTION:ADD_CONNECTION:{"sourceName":"Alex","targetName":"Morgan"
       // Add a placeholder assistant message for streaming
       const assistantMsgId = crypto.randomUUID();
       let assistantText = '';
+      let reasoningText = '';
 
       setMessages((prev) => [
         ...prev,
@@ -120,9 +122,12 @@ Example action: ACTION:ADD_CONNECTION:{"sourceName":"Alex","targetName":"Morgan"
           if (chunk.done) break;
 
           assistantText += chunk.content;
+          reasoningText += chunk.reasoning;
           setMessages((prev) =>
             prev.map((m) =>
-              m.id === assistantMsgId ? { ...m, text: assistantText } : m
+              m.id === assistantMsgId
+                ? { ...m, text: assistantText, reasoning: reasoningText }
+                : m
             )
           );
         }

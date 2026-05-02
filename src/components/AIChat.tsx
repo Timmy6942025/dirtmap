@@ -115,6 +115,12 @@ export default function AIChat() {
             )}
             {messages.map((msg) => (
               <div key={msg.id} className={`ai-message ${msg.role}`}>
+                {msg.reasoning && (
+                  <div className="ai-reasoning">
+                    <span className="ai-reasoning-label">Thinking</span>
+                    <span className="ai-reasoning-text">{msg.reasoning}</span>
+                  </div>
+                )}
                 {msg.text}
               </div>
             ))}

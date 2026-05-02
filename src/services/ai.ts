@@ -7,6 +7,7 @@ export interface AIMessage {
 
 export interface AIStreamChunk {
   content: string;
+  reasoning: string;
   done: boolean;
 }
 
@@ -41,20 +42,42 @@ export async function* streamAIChat(
     buffer = lines.pop() ?? '';
 
     for (const line of lines) {
+      // Handle explicit SSE error events from our proxy
+      if (line.startsWith('event: error')) {
+        // The next line should be the data payload
+        continue;
+      }
+
       if (!line.startsWith('data: ')) continue;
       const data = line.slice(6).trim();
       if (data === '[DONE]') {
-        yield { content: '', done: true };
+        yield { content: '', reasoning: '', done: true };
         return;
       }
+
       try {
         const parsed = JSON.parse(data);
-        const content = parsed.choices?.[0]?.delta?.content ?? '';
-        if (content) {
-          yield { content, done: false };
+
+        // Detect upstream error payloads that OpenRouter may embed mid-stream
+        if (parsed.error) {
+          throw new Error(
+            typeof parsed.error === 'string'
+              ? parsed.error
+              : parsed.error.message || 'Upstream AI error'
+          );
         }
-      } catch {
-        // Skip malformed JSON lines
+
+        const content = parsed.choices?.[0]?.delta?.content ?? '';
+        const reasoning = parsed.choices?.[0]?.delta?.reasoning ?? '';
+        if (content || reasoning) {
+          yield { content, reasoning, done: false };
+        }
+      } catch (err) {
+        // Re-throw real upstream errors; skip JSON parse failures (e.g. partial chunks)
+        if (err instanceof SyntaxError) {
+          continue; // skip malformed JSON line and keep processing the stream
+        }
+        throw err;
       }
     }
   }
@@ -65,15 +88,27 @@ export async function* streamAIChat(
     if (line.startsWith('data: ') && line.slice(6).trim() !== '[DONE]') {
       try {
         const parsed = JSON.parse(line.slice(6).trim());
+        if (parsed.error) {
+          throw new Error(
+            typeof parsed.error === 'string'
+              ? parsed.error
+              : parsed.error.message || 'Upstream AI error'
+          );
+        }
         const content = parsed.choices?.[0]?.delta?.content ?? '';
-        if (content) yield { content, done: false };
-      } catch {
-        // Skip malformed final chunk
+        const reasoning = parsed.choices?.[0]?.delta?.reasoning ?? '';
+        if (content || reasoning) yield { content, reasoning, done: false };
+      } catch (err) {
+        if (err instanceof SyntaxError) {
+          // skip malformed JSON in final flush — stream is done anyway
+        } else {
+          throw err;
+        }
       }
     }
   }
 
-  yield { content: '', done: true };
+  yield { content: '', reasoning: '', done: true };
 }
 
 // Check if the AI backend is configured and reachable

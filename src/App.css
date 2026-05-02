@@ -1224,6 +1224,33 @@
   border-bottom-left-radius: 1px;
 }
 
+.ai-reasoning {
+  margin-bottom: 6px;
+  padding: 6px 8px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ai-reasoning-label {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--accent);
+  opacity: 0.8;
+}
+
+.ai-reasoning-text {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  font-style: italic;
+  line-height: 1.45;
+}
+
 .ai-chat-input {
   display: flex;
   align-items: center;

@@ -204,9 +204,9 @@ export default function NetworkGraph() {
         z-index: 10;
       }
       node[inD='false'] {
-        border-opacity: 0.06;
-        background-opacity: 0.08;
-        text-opacity: 0.12;
+        border-opacity: 0.25;
+        background-opacity: 0.3;
+        text-opacity: 0.4;
       }
       node[connType='outgoing'] {
         border-color: #22d3ee;
@@ -399,7 +399,6 @@ export default function NetworkGraph() {
 
     // Overlay position updates
     cy.on('viewport dragfree', () => updateOverlayPositions());
-    const layoutInterval = setInterval(() => updateOverlayPositions(), 50);
 
     // Marching ants animation
     let dashOffset = 0;
@@ -416,7 +415,6 @@ export default function NetworkGraph() {
     // Cleanup
     return () => {
       clearInterval(animInterval);
-      clearInterval(layoutInterval);
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current);

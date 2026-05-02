@@ -109,6 +109,7 @@ interface NetworkContextType {
   getConnectionCount: (personId: string) => number;
   getVulnerabilityScore: (personId: string) => number;
   getDangerScore: (personId: string) => number;
+  getIncomingEntries: (personId: string) => { sourceId: string; entries: LeverageEntry[] }[];
 }
 
 const NetworkContext = createContext<NetworkContextType | null>(null);
@@ -150,6 +151,32 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     [state.people]
   );
 
+  // Compute incoming entries from the canonical hasOnOthers source.
+  // Returns a list of {sourceId, entries} so the RightPanel can show who's targeting this person.
+  const getIncomingEntries = useCallback(
+    (personId: string) => {
+      // Collect all hasOnOthers entries that target this personId
+      const incomingMap = new Map<string, LeverageEntry[]>();
+      for (const p of state.people) {
+        for (const entry of p.hasOnOthers) {
+          if (entry.targetId === personId) {
+            if (!incomingMap.has(p.id)) incomingMap.set(p.id, []);
+            incomingMap.get(p.id)!.push(entry);
+          }
+        }
+      }
+      // Return sorted by source name
+      return Array.from(incomingMap.entries())
+        .map(([sourceId, entries]) => ({ sourceId, entries }))
+        .sort((a, b) => {
+          const nameA = state.people.find((p) => p.id === a.sourceId)?.name ?? '';
+          const nameB = state.people.find((p) => p.id === b.sourceId)?.name ?? '';
+          return nameA.localeCompare(nameB);
+        });
+    },
+    [state.people]
+  );
+
   const getFilteredPeople = useCallback(() => {
     let people = state.people;
 
@@ -178,7 +205,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
   return (
     <NetworkContext.Provider
-      value={{ state, dispatch, getFilteredPeople, getPersonById, getConnectionCount, getVulnerabilityScore, getDangerScore }}
+      value={{ state, dispatch, getFilteredPeople, getPersonById, getConnectionCount, getVulnerabilityScore, getDangerScore, getIncomingEntries }}
     >
       {children}
     </NetworkContext.Provider>

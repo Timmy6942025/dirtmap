@@ -33,9 +33,11 @@ function SeverityDots({ severity }: { severity: number }) {
   );
 }
 
-function LeverageEntryCard({ entry, viewMode, getPersonById }: { entry: LeverageEntry; viewMode: ViewMode; getPersonById: (id: string) => { name: string; avatarColor: string; initials: string } | undefined }) {
-  const target = getPersonById(entry.targetId);
-  if (!target) return null;
+function LeverageEntryCard({ entry, viewMode, getPersonById, sourcePerson }: { entry: LeverageEntry; viewMode: ViewMode; getPersonById: (id: string) => { name: string; avatarColor: string; initials: string } | undefined; sourcePerson?: { name: string; avatarColor: string; initials: string } }) {
+  // For incoming entries, sourcePerson is the person who has dirt on the selected person.
+  // For outgoing entries, we show the target (the person they have dirt on).
+  const person = sourcePerson ?? getPersonById(entry.targetId);
+  if (!person) return null;
 
   return (
     <div className="leverage-entry">
@@ -43,11 +45,11 @@ function LeverageEntryCard({ entry, viewMode, getPersonById }: { entry: Leverage
         <div className="leverage-entry-person">
           <div
             className="leverage-avatar-tiny"
-            style={{ backgroundColor: target.avatarColor + '22', color: target.avatarColor, borderColor: target.avatarColor }}
+            style={{ backgroundColor: person.avatarColor + '22', color: person.avatarColor, borderColor: person.avatarColor }}
           >
-            {target.initials}
+            {person.initials}
           </div>
-          <span className="leverage-entry-name">{target.name}</span>
+          <span className="leverage-entry-name">{person.name}</span>
         </div>
         <SeverityDots severity={entry.severity} />
       </div>
@@ -84,7 +86,7 @@ function LeverageEntryCard({ entry, viewMode, getPersonById }: { entry: Leverage
 }
 
 export default function RightPanel() {
-  const { state, dispatch, getPersonById, getConnectionCount, getVulnerabilityScore, getDangerScore } = useNetwork();
+  const { state, dispatch, getPersonById, getConnectionCount, getVulnerabilityScore, getDangerScore, getIncomingEntries } = useNetwork();
   const [activeTab, setActiveTab] = useState<Tab>('has-on-others');
   const [aiInput, setAiInput] = useState('')
 
@@ -186,7 +188,7 @@ export default function RightPanel() {
           onClick={() => setActiveTab('others-have-on-them')}
         >
           Others Have On Them
-          <span className="tab-count">{person.othersHaveOnThem.length}</span>
+          <span className="tab-count">{getIncomingEntries(person.id).reduce((sum, g) => sum + g.entries.length, 0)}</span>
         </button>
       </div>
 
@@ -204,13 +206,28 @@ export default function RightPanel() {
         )}
         {activeTab === 'others-have-on-them' && (
           <>
-            {person.othersHaveOnThem.length === 0 ? (
-              <div className="empty-state">No leverage entries</div>
-            ) : (
-              person.othersHaveOnThem.map((entry) => (
-                <LeverageEntryCard key={entry.id} entry={entry} viewMode={state.viewMode} getPersonById={getPersonById} />
-              ))
-            )}
+            {(() => {
+              const incomingGroups = getIncomingEntries(person.id);
+              if (incomingGroups.length === 0) return <div className="empty-state">No leverage entries</div>;
+              return (
+                <>
+                  {incomingGroups.flatMap(({ sourceId, entries }) =>
+                    entries.map((entry) => {
+                      const source = getPersonById(sourceId);
+                      return (
+                        <LeverageEntryCard
+                          key={entry.id}
+                          entry={entry}
+                          viewMode={state.viewMode}
+                          getPersonById={getPersonById}
+                          sourcePerson={source}
+                        />
+                      );
+                    })
+                  )}
+                </>
+              );
+            })()}
           </>
         )}
       </div>

@@ -155,8 +155,19 @@ export default function NetworkGraph() {
       };
     }
 
-    // Edge data — each leverage entry becomes an edge using entry.id as the edge id
+    // Edge data — each leverage entry becomes an edge using entry.id as the edge id.
+    // Track parallel edges (multiple entries between same source/target pair) and offset their curves.
     for (const person of allPeople) {
+      // Group entries by target to count parallel edges
+      const targetCounts = new Map<string, number>();
+      for (const entry of person.hasOnOthers) {
+        const count = targetCounts.get(entry.targetId) ?? 0;
+        targetCounts.set(entry.targetId, count + 1);
+      }
+
+      // Track which index each target is at
+      const targetIndices = new Map<string, number>();
+
       for (const entry of person.hasOnOthers) {
         const direction = selectedId
           ? person.id === selectedId ? 'outgoing'
@@ -167,8 +178,12 @@ export default function NetworkGraph() {
         const bothInD = localInDepthSet.has(person.id) && localInDepthSet.has(entry.targetId);
         const isConnected = selectedId !== null && (person.id === selectedId || entry.targetId === selectedId);
 
+        const totalBetweenPair = targetCounts.get(entry.targetId) ?? 1;
+        const thisIndex = targetIndices.get(entry.targetId) ?? 0;
+        targetIndices.set(entry.targetId, thisIndex + 1);
+
         edgeData.push({
-          id: entry.id, // use the leverage entry's own id — unique, stable
+          id: entry.id,
           source: person.id,
           target: entry.targetId,
           severity: entry.severity,
@@ -176,6 +191,8 @@ export default function NetworkGraph() {
           isConnected: isConnected ? 'true' : 'false',
           bothInD: bothInD ? 'true' : 'false',
           hasSel: selectedId ? 'true' : 'false',
+          edgeIndex: thisIndex,
+          totalParallel: totalBetweenPair,
         });
       }
     }
@@ -290,6 +307,37 @@ export default function NetworkGraph() {
         width: 2.5;
         line-style: dashed;
         line-dash-pattern: 5 8;
+      }
+      /* Parallel edge offset: spread multiple edges between the same nodes across different curves */
+      edge[totalParallel='1'] {
+        control-point-offset: 0;
+      }
+      edge[totalParallel='2'][edgeIndex='0'] {
+        control-point-offset: -35;
+      }
+      edge[totalParallel='2'][edgeIndex='1'] {
+        control-point-offset: 35;
+      }
+      edge[totalParallel='3'][edgeIndex='0'] {
+        control-point-offset: -45;
+      }
+      edge[totalParallel='3'][edgeIndex='1'] {
+        control-point-offset: 0;
+      }
+      edge[totalParallel='3'][edgeIndex='2'] {
+        control-point-offset: 45;
+      }
+      edge[totalParallel='4'][edgeIndex='0'] {
+        control-point-offset: -50;
+      }
+      edge[totalParallel='4'][edgeIndex='1'] {
+        control-point-offset: -17;
+      }
+      edge[totalParallel='4'][edgeIndex='2'] {
+        control-point-offset: 17;
+      }
+      edge[totalParallel='4'][edgeIndex='3'] {
+        control-point-offset: 50;
       }
       ${dimRule}
       .eh-handle {

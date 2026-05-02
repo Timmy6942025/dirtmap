@@ -37,10 +37,15 @@ export default function NetworkGraph() {
     const selectedId = state.selectedPersonId;
     if (!selectedId) return s;
 
-    // Build outgoing map from all people
+    // Build outgoing and incoming maps from all people
     const outgoingMap = new Map<string, Set<string>>();
+    const incomingMap = new Map<string, Set<string>>();
     for (const p of state.people) {
       outgoingMap.set(p.id, new Set(p.hasOnOthers.map((e) => e.targetId)));
+      for (const entry of p.hasOnOthers) {
+        if (!incomingMap.has(entry.targetId)) incomingMap.set(entry.targetId, new Set());
+        incomingMap.get(entry.targetId)!.add(p.id);
+      }
     }
 
     const addReachable = (personId: string, hopsRemaining: number) => {
@@ -50,6 +55,10 @@ export default function NetworkGraph() {
       const outTargets = outgoingMap.get(personId);
       if (outTargets) {
         for (const t of outTargets) addReachable(t, hopsRemaining - 1);
+      }
+      const inTargets = incomingMap.get(personId);
+      if (inTargets) {
+        for (const t of inTargets) addReachable(t, hopsRemaining - 1);
       }
     };
     addReachable(selectedId, state.networkDepth);
@@ -96,7 +105,8 @@ export default function NetworkGraph() {
       }
     }
 
-    // BFS from selected person using ONLY the hasOnOthers canonical graph
+    // BFS from selected person walking BOTH outgoing AND incoming edges
+    // (include people they have leverage on AND people who have leverage on them)
     const localInDepthSet = new Set<string>();
     if (selectedId) {
       const addReachable = (personId: string, hopsRemaining: number) => {
@@ -106,6 +116,10 @@ export default function NetworkGraph() {
         const outTargets = outgoingMap.get(personId);
         if (outTargets) {
           for (const t of outTargets) addReachable(t, hopsRemaining - 1);
+        }
+        const inTargets = incomingMap.get(personId);
+        if (inTargets) {
+          for (const t of inTargets) addReachable(t, hopsRemaining - 1);
         }
       };
       addReachable(selectedId, state.networkDepth);
@@ -505,6 +519,9 @@ export default function NetworkGraph() {
     // Update stylesheet — this is all we need on selection/deselect
     // Nodes stay exactly where they are, only visual dimming changes
     cy.style().fromString(stylesheet).update();
+
+    // Update overlay labels immediately so new selection's name appears without drag
+    updateOverlayPositions();
 
   }, [state.people, state.networkDepth, state.selectedPersonId, dispatch, buildData, buildStylesheet, updateOverlayPositions]);
 

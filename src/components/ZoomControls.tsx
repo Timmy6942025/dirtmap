@@ -43,48 +43,36 @@ export default function ZoomControls() {
         </svg>
       </button>
 
-      <div className="zoom-divider" />
+      {state.selectedPersonId && (
+        <>
+          <div className="zoom-divider" />
+          <div className="depth-indicator">
+            <span className="depth-label">Depth</span>
+            <span className="depth-value">{state.networkDepth}</span>
+          </div>
 
-      <div className="depth-indicator">
-        <span className="depth-label">Depth</span>
-        <span className="depth-value">{state.networkDepth}</span>
-      </div>
+          <button
+            className="zoom-btn"
+            onClick={() => dispatch({ type: 'SET_NETWORK_DEPTH', depth: Math.max(1, state.networkDepth - 1) })}
+            title="Decrease depth"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
 
-      <button
-        className="zoom-btn"
-        onClick={() => dispatch({ type: 'SET_NETWORK_DEPTH', depth: Math.max(1, state.networkDepth - 1) })}
-        title="Decrease depth"
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <line x1="5" y1="12" x2="19" y2="12" />
-        </svg>
-      </button>
-
-      <button
-        className="zoom-btn"
-        onClick={() => dispatch({ type: 'SET_NETWORK_DEPTH', depth: Math.min(3, state.networkDepth + 1) })}
-        title="Increase depth"
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <line x1="12" y1="5" x2="12" y2="19" />
-          <line x1="5" y1="12" x2="19" y2="12" />
-        </svg>
-      </button>
-
-      <div className="zoom-divider" />
-
-      <button
-        className="zoom-btn expand-btn"
-        onClick={() => dispatch({ type: 'SET_NETWORK_DEPTH', depth: 2 })}
-        title="Show 2nd degree connections"
-      >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <circle cx="12" cy="12" r="2" />
-          <circle cx="12" cy="12" r="6" strokeDasharray="2 2" />
-          <circle cx="12" cy="12" r="10" strokeDasharray="2 2" />
-        </svg>
-        Expand
-      </button>
+          <button
+            className="zoom-btn"
+            onClick={() => dispatch({ type: 'SET_NETWORK_DEPTH', depth: Math.min(3, state.networkDepth + 1) })}
+            title="Increase depth"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
+        </>
+      )}
     </div>
   );
 }

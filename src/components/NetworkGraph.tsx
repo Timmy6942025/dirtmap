@@ -271,6 +271,8 @@ export default function NetworkGraph() {
         target-arrow-color: #fbbf24;
         arrow-scale: 1.3;
         source-arrow-shape: none;
+        overlay-padding: 8;
+        overlay-opacity: 0;
         transition-property: line-color, line-opacity, width, border-width, border-color;
         transition-duration: 0.2s;
         z-index: 1;

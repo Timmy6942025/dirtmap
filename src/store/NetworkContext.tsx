@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 
 type Action =
   | { type: 'SELECT_PERSON'; personId: string | null }
+  | { type: 'SELECT_EDGE'; edgeId: string | null }
   | { type: 'SET_VIEW_MODE'; mode: ViewMode }
   | { type: 'SET_SEARCH_QUERY'; query: string }
   | { type: 'SET_ACTIVE_FILTER'; filter: FilterType }
@@ -21,6 +22,7 @@ type Action =
 const initialState: NetworkState = {
   people: mockPeople,
   selectedPersonId: null,
+  selectedEdgeId: null,
   viewMode: 'public',
   searchQuery: '',
   activeFilter: 'all',
@@ -37,7 +39,13 @@ function networkReducer(state: NetworkState, action: Action): NetworkState {
       return {
         ...state,
         selectedPersonId: action.personId,
+        selectedEdgeId: action.personId !== null ? null : state.selectedEdgeId, // clear edge when selecting person
         rightPanelOpen: action.personId !== null,
+      };
+    case 'SELECT_EDGE':
+      return {
+        ...state,
+        selectedEdgeId: action.edgeId,
       };
     case 'SET_VIEW_MODE':
       return { ...state, viewMode: action.mode };

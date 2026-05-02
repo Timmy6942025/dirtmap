@@ -35,6 +35,7 @@ export type FilterType = 'all' | 'most-connected' | 'most-vulnerable' | 'most-da
 export interface NetworkState {
   people: Person[];
   selectedPersonId: string | null;
+  selectedEdgeId: string | null; // edge being inspected in detail
   viewMode: ViewMode;
   searchQuery: string;
   activeFilter: FilterType;

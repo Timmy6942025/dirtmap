@@ -177,6 +177,7 @@ export default function NetworkGraph() {
 
         const bothInD = localInDepthSet.has(person.id) && localInDepthSet.has(entry.targetId);
         const isConnected = selectedId !== null && (person.id === selectedId || entry.targetId === selectedId);
+        const isSelected = state.selectedEdgeId === entry.id;
 
         const totalBetweenPair = targetCounts.get(entry.targetId) ?? 1;
         const thisIndex = targetIndices.get(entry.targetId) ?? 0;
@@ -191,6 +192,7 @@ export default function NetworkGraph() {
           isConnected: isConnected ? 'true' : 'false',
           bothInD: bothInD ? 'true' : 'false',
           hasSel: selectedId ? 'true' : 'false',
+          isSelected: isSelected ? 'true' : 'false',
           edgeIndex: thisIndex,
           totalParallel: totalBetweenPair,
         });
@@ -198,9 +200,11 @@ export default function NetworkGraph() {
     }
 
     return { nodeData, edgeData, hasSel: !!selectedId };
-  }, [state.selectedPersonId, state.networkDepth, state.people]);
+  }, [state.selectedPersonId, state.selectedEdgeId, state.networkDepth, state.people]);
 
   // ── Stylesheet ─────────────────────────────────────
+  // Color layering: direction sets base style, severity colors override on top for default-direction edges.
+  // Selected edge gets glow highlight. Parallel edges spread via control-point-offset.
   const buildStylesheet = useCallback((hasSel: boolean) => {
     const dimRule = hasSel ? `
       edge[hasSel='true'][direction='default'][isConnected='true'] {
@@ -269,6 +273,7 @@ export default function NetworkGraph() {
         border-opacity: 0.8;
         text-opacity: 1;
       }
+      /* ── Edges: base ───────────────────────── */
       edge {
         curve-style: bezier;
         control-point-step-size: 40;
@@ -279,19 +284,38 @@ export default function NetworkGraph() {
         target-arrow-color: #fbbf24;
         arrow-scale: 1.3;
         source-arrow-shape: none;
-        transition-property: line-color, line-opacity, width;
+        transition-property: line-color, line-opacity, width, border-width, border-color;
         transition-duration: 0.2s;
+        z-index: 1;
       }
-      edge[severity >= 4] {
+      /* ── Severity colors (override base, for direction='default' only) ── */
+      edge[direction='default'][severity >= 5] {
+        line-color: #ef4444;
+        target-arrow-color: #ef4444;
+        width: 3.5;
+      }
+      edge[direction='default'][severity = 4] {
         line-color: #f87171;
         target-arrow-color: #f87171;
         width: 3;
       }
-      edge[severity >= 3] {
+      edge[direction='default'][severity = 3] {
         line-color: #fb923c;
         target-arrow-color: #fb923c;
         width: 2.5;
       }
+      edge[direction='default'][severity = 2] {
+        line-color: #fbbf24;
+        target-arrow-color: #fbbf24;
+        width: 2;
+      }
+      edge[direction='default'][severity = 1] {
+        line-color: #94a3b8;
+        target-arrow-color: #94a3b8;
+        width: 1.5;
+        line-opacity: 0.4;
+      }
+      /* ── Direction colors (override severity for outgoing/incoming) ── */
       edge[direction='outgoing'] {
         line-color: #22d3ee;
         target-arrow-color: #22d3ee;
@@ -308,7 +332,24 @@ export default function NetworkGraph() {
         line-style: dashed;
         line-dash-pattern: 5 8;
       }
-      /* Parallel edge offset: spread multiple edges between the same nodes across different curves */
+      /* ── Selected edge highlight ── */
+      edge[isSelected='true'] {
+        width: 4;
+        line-opacity: 1;
+        z-index: 100;
+        border-width: 2;
+        border-color: white;
+        border-opacity: 0.6;
+      }
+      edge[isSelected='true'][direction='outgoing'] {
+        line-color: #67e8f9;
+        target-arrow-color: #67e8f9;
+      }
+      edge[isSelected='true'][direction='incoming'] {
+        line-color: #fca5a5;
+        target-arrow-color: #fca5a5;
+      }
+      /* ── Parallel edge offset: spread multiple edges between the same nodes ── */
       edge[totalParallel='1'] {
         control-point-offset: 0;
       }
@@ -462,15 +503,16 @@ export default function NetworkGraph() {
       },
     };
 
-    // Node click → select
+    // Node click → select person
     cy.on('tap', 'node', (evt) => {
       dispatch({ type: 'SELECT_PERSON', personId: evt.target.id() });
     });
 
-    // Background tap → deselect
+    // Background tap → deselect person and edge
     cy.on('tap', (evt) => {
       if (evt.target === cy) {
         dispatch({ type: 'SELECT_PERSON', personId: null });
+        dispatch({ type: 'SELECT_EDGE', edgeId: null });
       }
     });
 
@@ -568,10 +610,18 @@ export default function NetworkGraph() {
     // Nodes stay exactly where they are, only visual dimming changes
     cy.style().fromString(stylesheet).update();
 
+    // Edge tap → inspect. Registered here (not in init effect) so it sees the current
+    // state.selectedEdgeId without stale closure.
+    cy.off('tap', 'edge');
+    cy.on('tap', 'edge', (evt) => {
+      const edgeId = evt.target.id();
+      dispatch({ type: 'SELECT_EDGE', edgeId: state.selectedEdgeId === edgeId ? null : edgeId });
+    });
+
     // Update overlay labels immediately so new selection's name appears without drag
     updateOverlayPositions();
 
-  }, [state.people, state.networkDepth, state.selectedPersonId, dispatch, buildData, buildStylesheet, updateOverlayPositions]);
+  }, [state.people, state.networkDepth, state.selectedPersonId, state.selectedEdgeId, dispatch, buildData, buildStylesheet, updateOverlayPositions]);
 
 
 

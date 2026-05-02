@@ -901,6 +901,123 @@
   font-style: italic;
 }
 
+.edge-detail-card {
+  margin: 8px 10px;
+  padding: 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md);
+  animation: edgeDetailIn 0.2s ease;
+}
+
+@keyframes edgeDetailIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.edge-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.edge-detail-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 0.02em;
+}
+
+.edge-detail-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  transition: all var(--transition-fast);
+}
+
+.edge-detail-close:hover {
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+}
+
+.edge-detail-parties {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.edge-party {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1;
+}
+
+.edge-party-role {
+  font-size: 9px;
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+
+.edge-arrow {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.edge-detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.edge-detail-severity {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.edge-detail-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-tertiary);
+}
+
+.edge-detail-categories {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.edge-detail-notes {
+  padding: 6px;
+  background: var(--bg-primary);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-primary);
+}
+
+.edge-detail-notes p {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin: 0 0 3px;
+}
+
 .empty-state {
   text-align: center;
   padding: 32px 16px;

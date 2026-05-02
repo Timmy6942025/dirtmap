@@ -204,9 +204,9 @@ export default function NetworkGraph() {
         z-index: 10;
       }
       node[inD='false'] {
-        border-opacity: 0.08;
-        background-opacity: 0.15;
-        text-opacity: 0.15;
+        border-opacity: 0.06;
+        background-opacity: 0.08;
+        text-opacity: 0.12;
       }
       node[connType='outgoing'] {
         border-color: #22d3ee;
@@ -280,6 +280,9 @@ export default function NetworkGraph() {
   }, []);
 
   // ── Layout options ─────────────────────────────────
+  // Track whether we've already done the initial ego-graph layout
+  const hasDoneEgoLayoutRef = useRef(false);
+
   const buildLayoutOpts = useCallback((cy: cytoscape.Core, selectedId: string | null) => {
     const currentPositions = cy.nodes().map((n) => ({
       id: n.id(),
@@ -288,15 +291,27 @@ export default function NetworkGraph() {
     }));
     const hasPositions = currentPositions.length > 0 && currentPositions.some((p) => p.x !== 0 || p.y !== 0);
 
+    // If a node is selected and we've already done the ego-graph layout once, use preset
+    // (nodes stay where they are, only styles update in-place)
+    if (selectedId && hasPositions && hasDoneEgoLayoutRef.current) {
+      return {
+        name: 'preset' as const,
+        animate: true,
+        animationDuration: 200,
+        animationEasing: 'ease-in-out-cubic',
+        fit: false,
+      };
+    }
+
     const layoutName = selectedId ? 'concentric' : 'fcose';
 
     const base = {
       name: layoutName,
       quality: 'default' as const,
       animate: true,
-      animationDuration: hasPositions ? 400 : 700,
+      animationDuration: hasPositions ? 300 : 700,
       animationEasing: 'ease-in-out-cubic',
-      fit: true,
+      fit: false, // Never fit — prevents jarring zoom on selection/deselection
       padding: 50,
     };
 
@@ -312,13 +327,12 @@ export default function NetworkGraph() {
           return 1;
         },
         levelWidth: (nodes: cytoscape.Collection) => Math.max(1, nodes.length / 5),
-        spacingFactor: 2.0,
+        spacingFactor: 2.5,
+        minNodeSpacing: 80,
         startAngle: -Math.PI / 2,
         sort: (a: cytoscape.NodeSingular, b: cytoscape.NodeSingular) => {
-          // Keep selected node at the center
           if (a.data('id') === selectedId) return -1;
           if (b.data('id') === selectedId) return 1;
-          // Sort remaining by concentric level
           return (b.data('connType') === 'bidirectional' ? 1 : 0) - (a.data('connType') === 'bidirectional' ? 1 : 0);
         },
       };
@@ -548,6 +562,15 @@ export default function NetworkGraph() {
     // Re-run layout from current positions (no destroy/recreate)
     const layoutOpts = buildLayoutOpts(cy, state.selectedPersonId);
     const layout = cy.layout(layoutOpts as any);
+
+    // Track ego-graph layout state
+    if (!state.selectedPersonId) {
+      // Deselected — reset so next selection gets concentric layout fresh
+      hasDoneEgoLayoutRef.current = false;
+    } else if (layoutOpts.name === 'concentric') {
+      // First concentric run — mark as done so subsequent selections use preset
+      hasDoneEgoLayoutRef.current = true;
+    }
 
     // Update overlay during animation
     const updateInterval = setInterval(() => updateOverlayPositions(), 50);

@@ -3,7 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { OpenRouter, HTTPClient } from '@openrouter/sdk';
 
-dotenv.config();
+dotenv.config({ override: true });
 
 const app = express();
 const PORT = 3001;
@@ -155,15 +155,26 @@ async function validateSetup() {
   }
 
   try {
-    const keyInfo = await openRouter.apiKeys.getCurrentKeyMetadata();
-    const ki = keyInfo as Record<string, unknown>;
-    const label = typeof ki.label === 'string' ? ki.label : 'no label';
-    const usage = typeof ki.usage === 'number' ? ki.usage : 0;
-    console.log(`\n  ✓ OpenRouter key valid — ${label} (${usage} credits used)`);
-    console.log(`  ✓ Model: ${AI_MODEL}`);
+    // The SDK's getCurrentKeyMetadata() hits /key which currently returns
+    // "User not found" for valid keys — it's a known SDK issue. We validate
+    // by making a minimal chat request instead.
+    const test = await openRouter.chat.send(
+      {
+        chatRequest: {
+          model: AI_MODEL,
+          messages: [{ role: 'user', content: 'ping' }],
+          max_tokens: 1,
+          stream: true,
+        },
+      },
+      { timeoutMs: 10_000 }
+    );
+    // Drain the tiny test stream
+    for await (const chunk of test) { void chunk; }
+    console.log(`\n  ✓ OpenRouter key valid — model ${AI_MODEL} reachable`);
     console.log(`  ✓ Server: http://localhost:${PORT}\n`);
   } catch (err) {
-    console.warn('\n  ⚠️  Could not reach OpenRouter to validate the API key.');
+    console.warn('\n  ⚠️  Could not reach OpenRouter or the API key is invalid.');
     console.warn(`     Error: ${err instanceof Error ? err.message : String(err)}\n`);
   }
 }

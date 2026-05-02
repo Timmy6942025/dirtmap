@@ -1,451 +1,592 @@
-import { useRef, useEffect, useCallback, useState } from 'react';
-import * as d3 from 'd3';
+import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
+import cytoscape from 'cytoscape';
+import fcose from 'cytoscape-fcose';
+import edgehandles from 'cytoscape-edgehandles';
 import { useNetwork } from '../store/NetworkContext';
 import { useZoomContext } from '../store/ZoomContext';
-import type { Person } from '../types';
 
-interface SimNode extends d3.SimulationNodeDatum {
-  id: string;
-  name: string;
-  initials: string;
-  avatarColor: string;
-  person: Person;
+// Register extensions
+cytoscape.use(fcose);
+cytoscape.use(edgehandles);
+
+// Type augmentation for Cytoscape extensions
+declare module 'cytoscape' {
+  interface Core {
+    edgehandles(options?: any): EdgeHandlesApi;
+  }
 }
 
-interface SimLink extends d3.SimulationLinkDatum<SimNode> {
-  severity: number;
-  categories: string[];
-  curvature: number; // how much to arc this link
-  linkIndex: number; // which parallel link this is
+interface EdgeHandlesApi {
+  enableDrawMode(): void;
+  disableDrawMode(): void;
+  destroy(): void;
 }
 
 export default function NetworkGraph() {
-  const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const positionCacheRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  const cyRef = useRef<cytoscape.Core | null>(null);
+  const ehRef = useRef<EdgeHandlesApi | null>(null);
+  const savedPositionsRef = useRef<Record<string, { x: number; y: number }>>({});
 
   const { state, dispatch } = useNetwork();
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
+  const [nodeLabelData, setNodeLabelData] = useState<Record<string, { x: number; y: number; h: number }>>({});
   const { zoomRef } = useZoomContext();
 
-  // Track container size
+  // Resize observer
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
-
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        setDimensions({
-          width: entry.contentRect.width,
-          height: entry.contentRect.height,
-        });
+        setDimensions({ width: entry.contentRect.width, height: entry.contentRect.height });
       }
     });
     observer.observe(container);
     return () => observer.disconnect();
   }, []);
 
-  const getEdgeColor = useCallback((severity: number) => {
-    if (severity >= 4) return '#f87171';
-    if (severity >= 3) return '#fb923c';
-    return '#fbbf24';
+  // Memoized people map
+  const peopleMap = useMemo(
+    () => new Map(state.people.map((p) => [p.id, p])),
+    [state.people]
+  );
+
+  // Compute depth set for overlay label visibility
+  const inDepthSet = useMemo(() => {
+    const s = new Set<string>();
+    const selectedId = state.selectedPersonId;
+    if (!selectedId) return s;
+    const addReachable = (personId: string, hopsRemaining: number) => {
+      if (s.has(personId) || hopsRemaining < 0) return;
+      s.add(personId);
+      if (hopsRemaining === 0) return;
+      const person = peopleMap.get(personId);
+      if (!person) return;
+      for (const entry of person.hasOnOthers) addReachable(entry.targetId, hopsRemaining - 1);
+      for (const entry of person.othersHaveOnThem) addReachable(entry.targetId, hopsRemaining - 1);
+    };
+    addReachable(selectedId, state.networkDepth);
+    return s;
+  }, [state.selectedPersonId, state.networkDepth, peopleMap]);
+
+  // Update name overlay positions — uses renderedHeight so offset scales with zoom
+  const rafIdRef = useRef<number>(0);
+  const updateOverlayPositions = useCallback(() => {
+    if (rafIdRef.current) return;
+    rafIdRef.current = requestAnimationFrame(() => {
+      rafIdRef.current = 0;
+      const cy = cyRef.current;
+      if (!cy) return;
+      const data: Record<string, { x: number; y: number; h: number }> = {};
+      cy.nodes().forEach((node) => {
+        const pos = node.renderedPosition();
+        data[node.id()] = { x: pos.x, y: pos.y, h: node.renderedHeight() };
+      });
+      setNodeLabelData(data);
+    });
   }, []);
 
-  // Build/rebuild the force simulation
+  // ── Main Cytoscape setup ────────────────────────────
   useEffect(() => {
-    if (!svgRef.current || !dimensions.width || !dimensions.height) return;
+    if (!containerRef.current) return;
 
-    const svg = d3.select<SVGSVGElement, unknown>(svgRef.current);
-    svg.selectAll('*').remove();
-
-    const width = dimensions.width;
-    const height = dimensions.height;
-    const positionCache = positionCacheRef.current;
-    const hasCachedPositions = positionCache.size > 0;
-
-    // ── Defs ──────────────────────────────────────────
-    const defs = svg.append('defs');
-
-    // Dot grid pattern
-    const gridPattern = defs
-      .append('pattern')
-      .attr('id', 'dot-grid')
-      .attr('width', 24)
-      .attr('height', 24)
-      .attr('patternUnits', 'userSpaceOnUse');
-    gridPattern
-      .append('circle')
-      .attr('cx', 12)
-      .attr('cy', 12)
-      .attr('r', 0.6)
-      .attr('fill', 'rgba(255,255,255,0.04)');
-
-    // Pulse animation for selected node
-    const pulseFilter = defs.append('filter').attr('id', 'pulse-glow');
-    pulseFilter
-      .append('feGaussianBlur')
-      .attr('stdDeviation', '4')
-      .attr('result', 'blur');
-    const feMerge = pulseFilter.append('feMerge');
-    feMerge.append('feMergeNode').attr('in', 'blur');
-    feMerge.append('feMergeNode').attr('in', 'SourceGraphic');
-
-    // Arrow markers per severity — small, subtle
-    [1, 2, 3, 4, 5].forEach((sev) => {
-      const color = getEdgeColor(sev);
-      defs
-        .append('marker')
-        .attr('id', `arrow-${sev}`)
-        .attr('viewBox', '0 -3 6 6')
-        .attr('refX', 30)
-        .attr('refY', 0)
-        .attr('markerWidth', 4)
-        .attr('markerHeight', 4)
-        .attr('orient', 'auto')
-        .append('path')
-        .attr('d', 'M0,-2L4,0L0,2')
-        .attr('fill', color)
-        .attr('opacity', 0.7);
-    });
-
-    // ── Depth calculation ─────────────────────────────
+    const selectedId = state.selectedPersonId;
     const allPeople = state.people;
-    const peopleMap = new Map(allPeople.map((p) => [p.id, p]));
-    const inDepthSet = new Set<string>();
 
-    if (state.selectedPersonId) {
+    // ── Depth + connection classification ─────────────
+    const localInDepthSet = new Set<string>();
+    if (selectedId) {
       const addReachable = (personId: string, hopsRemaining: number) => {
-        if (inDepthSet.has(personId) || hopsRemaining < 0) return;
-        inDepthSet.add(personId);
+        if (localInDepthSet.has(personId) || hopsRemaining < 0) return;
+        localInDepthSet.add(personId);
         if (hopsRemaining === 0) return;
         const person = peopleMap.get(personId);
         if (!person) return;
-        for (const entry of person.hasOnOthers) {
-          addReachable(entry.targetId, hopsRemaining - 1);
-        }
-        for (const entry of person.othersHaveOnThem) {
-          addReachable(entry.targetId, hopsRemaining - 1);
-        }
+        for (const entry of person.hasOnOthers) addReachable(entry.targetId, hopsRemaining - 1);
+        for (const entry of person.othersHaveOnThem) addReachable(entry.targetId, hopsRemaining - 1);
       };
-      addReachable(state.selectedPersonId, state.networkDepth);
+      addReachable(selectedId, state.networkDepth);
     }
 
-    // ── Build nodes ────────────────────────────────────
-    const nodes: SimNode[] = allPeople.map((p) => {
-      const cached = positionCache.get(p.id);
-      return {
-        id: p.id,
-        name: p.name,
-        initials: p.initials,
-        avatarColor: p.avatarColor,
-        person: p,
-        x: cached?.x ?? width / 2 + (Math.random() - 0.5) * 300,
-        y: cached?.y ?? height / 2 + (Math.random() - 0.5) * 300,
-      };
+    const connectionTypeMap = new Map<string, 'outgoing' | 'incoming' | 'bidirectional' | 'none'>();
+    if (selectedId) {
+      const sp = peopleMap.get(selectedId);
+      if (sp) {
+        const outIds = new Set(sp.hasOnOthers.map((e) => e.targetId));
+        const inIds = new Set(sp.othersHaveOnThem.map((e) => e.targetId));
+        for (const p of allPeople) {
+          if (p.id === selectedId) continue;
+          const isOut = outIds.has(p.id);
+          const isIn = inIds.has(p.id);
+          connectionTypeMap.set(p.id, isOut && isIn ? 'bidirectional' : isOut ? 'outgoing' : isIn ? 'incoming' : 'none');
+        }
+      }
+    }
+
+    // ── Build Cytoscape elements ───────────────────────
+    const elements: cytoscape.ElementDefinition[] = [];
+
+    // Restore saved positions from previous instance to avoid layout jumps
+    const savedPositions = savedPositionsRef.current;
+
+    // Nodes
+    allPeople.forEach((p) => {
+      const connType = selectedId ? (connectionTypeMap.get(p.id) ?? 'none') : undefined;
+      const isSel = p.id === selectedId;
+      const inD = !selectedId || localInDepthSet.has(p.id);
+      const saved = savedPositions[p.id];
+      elements.push({
+        data: {
+          id: p.id,
+          initials: p.initials,
+          avatarColor: p.avatarColor,
+          connType: connType ?? 'default',
+          isSel: isSel ? 'true' : 'false',
+          inD: inD ? 'true' : 'false',
+        },
+        position: saved ? { x: saved.x, y: saved.y } : undefined,
+      });
     });
 
-    const nodeMap = new Map(nodes.map((n) => [n.id, n]));
-
-    // ── Build links with curvature for parallel edges ──
-    // Group links by source-target pair to compute curvature offsets
-    const linkPairs = new Map<string, number>(); // "sourceId-targetId" → count
-    const links: SimLink[] = [];
+    // Edges — one per hasOnOthers entry, giving natural multigraph support
+    // Cytoscape bezier + control-point-step-size separates bidirectional edges automatically
+    const pairEdgeCount = new Map<string, number>();
 
     allPeople.forEach((person) => {
       person.hasOnOthers.forEach((entry) => {
-        const source = nodeMap.get(person.id);
-        const target = nodeMap.get(entry.targetId);
-        if (source && target) {
-          const pairKey = [person.id, entry.targetId].sort().join('-');
-          const pairIndex = linkPairs.get(pairKey) ?? 0;
-          linkPairs.set(pairKey, pairIndex + 1);
+        const pairKey = [person.id, entry.targetId].sort().join('-');
+        const edgeIdx = pairEdgeCount.get(pairKey) ?? 0;
+        pairEdgeCount.set(pairKey, edgeIdx + 1);
 
-          // Determine direction: if source.id < target.id, curvature is positive; else negative
-          // This ensures bidirectional edges curve in opposite directions
-          const sameDirection = person.id < entry.targetId;
-          const curvatureBase = 0.15;
-          const curvature = sameDirection
-            ? curvatureBase + pairIndex * 0.12
-            : -(curvatureBase + pairIndex * 0.12);
-
-          links.push({
-            source: source,
-            target: target,
-            severity: entry.severity,
-            categories: entry.categories,
-            curvature,
-            linkIndex: pairIndex,
-          });
+        // Determine direction for coloring
+        let direction: string = 'default';
+        if (selectedId) {
+          if (person.id === selectedId) direction = 'outgoing';
+          else if (entry.targetId === selectedId) direction = 'incoming';
         }
+
+        const bothInD = localInDepthSet.has(person.id) && localInDepthSet.has(entry.targetId);
+        const isConnected = selectedId !== null && (person.id === selectedId || entry.targetId === selectedId);
+
+        elements.push({
+          data: {
+            id: `${person.id}->${entry.targetId}-${edgeIdx}`,
+            source: person.id,
+            target: entry.targetId,
+            severity: entry.severity,
+            direction,
+            isConnected: isConnected ? 'true' : 'false',
+            bothInD: bothInD ? 'true' : 'false',
+            hasSel: selectedId ? 'true' : 'false',
+          },
+        });
       });
     });
 
-    // ── Main group with zoom ───────────────────────────
-    const g = svg.append('g');
+    // ── Cytoscape stylesheet ───────────────────────────
+    const stylesheet: any[] = [
+      // ── Node styles ──
+      {
+        selector: 'node',
+        style: {
+          'label': 'data(initials)',
+          'text-valign': 'center',
+          'text-halign': 'center',
+          'font-size': '14px',
+          'font-weight': 700,
+          'font-family': "'JetBrains Mono', 'SF Mono', monospace",
+          'color': 'data(avatarColor)',
+          'text-opacity': 1,
+          'background-color': '#0f0f11',
+          'background-opacity': 1,
+          'border-width': 2,
+          'border-color': 'data(avatarColor)',
+          'border-opacity': 0.5,
+          'width': 52,
+          'height': 52,
+          'text-outline-width': 0,
+          'overlay-padding': 10,
+          'transition-property': 'border-opacity, border-width, background-color, text-opacity',
+          'transition-duration': '0.2s',
+        },
+      },
+      // Hover — brighter border and fill
+      {
+        selector: 'node:hover',
+        style: {
+          'border-opacity': 0.9,
+          'border-width': 3,
+          'background-color': '#18181b',
+        },
+      },
+      // Selected node — thicker border, glow effect
+      {
+        selector: 'node[isSel = "true"]',
+        style: {
+          'border-width': 3,
+          'border-opacity': 1,
+          'background-color': '#18181b',
+          'text-opacity': 1,
+          'z-index': 10,
+        },
+      },
+      // Nodes outside depth set — faded
+      {
+        selector: 'node[inD = "false"]',
+        style: {
+          'border-opacity': 0.08,
+          'background-opacity': 0.15,
+          'text-opacity': 0.15,
+        },
+      },
+      // Connection type encoding
+      {
+        selector: 'node[connType = "outgoing"]',
+        style: {
+          'border-color': '#22d3ee',
+          'border-opacity': 0.8,
+          'text-opacity': 1,
+        },
+      },
+      {
+        selector: 'node[connType = "incoming"]',
+        style: {
+          'border-color': '#f87171',
+          'border-opacity': 0.7,
+          'text-opacity': 1,
+        },
+      },
+      {
+        selector: 'node[connType = "bidirectional"]',
+        style: {
+          'border-color': '#a78bfa',
+          'border-opacity': 0.8,
+          'text-opacity': 1,
+        },
+      },
 
-    // Dot grid background
-    g.append('rect')
-      .attr('width', 6000)
-      .attr('height', 6000)
-      .attr('x', -3000)
-      .attr('y', -3000)
-      .attr('fill', 'url(#dot-grid)');
+      // ── Edge styles ──
+      {
+        selector: 'edge',
+        style: {
+          'curve-style': 'bezier',
+          'control-point-step-size': 40,
+          'width': 1.5,
+          'line-color': '#fbbf24',
+          'line-opacity': 0.55,
+          'target-arrow-shape': 'triangle',
+          'target-arrow-color': '#fbbf24',
+          'arrow-scale': 1.3,
+          'source-arrow-shape': 'none',
+          'transition-property': 'line-color, line-opacity, width',
+          'transition-duration': '0.2s',
+        },
+      },
+      // Severity-based edge coloring
+      {
+        selector: 'edge[severity >= 4]',
+        style: {
+          'line-color': '#f87171',
+          'target-arrow-color': '#f87171',
+          'width': 3,
+        },
+      },
+      {
+        selector: 'edge[severity >= 3]',
+        style: {
+          'line-color': '#fb923c',
+          'target-arrow-color': '#fb923c',
+          'width': 2.5,
+        },
+      },
+      // Outgoing edges from selected node — cyan, dashed marching ants
+      {
+        selector: 'edge[direction = "outgoing"]',
+        style: {
+          'line-color': '#22d3ee',
+          'target-arrow-color': '#22d3ee',
+          'line-opacity': 0.9,
+          'width': 3,
+          'line-style': 'dashed',
+          'line-dash-pattern': [10, 5],
+        },
+      },
+      // Incoming edges to selected node — red, dashed marching ants
+      {
+        selector: 'edge[direction = "incoming"]',
+        style: {
+          'line-color': '#f87171',
+          'target-arrow-color': '#f87171',
+          'line-opacity': 0.75,
+          'width': 2.5,
+          'line-style': 'dashed',
+          'line-dash-pattern': [5, 8],
+        },
+      },
+      // Connected but not directly outgoing/incoming (depth-2+ edges) — only when a node is selected
+      {
+        selector: 'edge[hasSel = "true"][isConnected = "true"][direction = "default"]',
+        style: {
+          'line-opacity': 0.25,
+        },
+      },
+      // Both endpoints in depth set, not directly connected to selected — only dim when selected
+      {
+        selector: 'edge[hasSel = "true"][bothInD = "true"][isConnected = "false"]',
+        style: {
+          'line-opacity': 0.15,
+        },
+      },
+      // Edges outside depth set — nearly invisible, only when a node is selected
+      {
+        selector: 'edge[hasSel = "true"][bothInD = "false"][isConnected = "false"]',
+        style: {
+          'line-opacity': 0.04,
+          'target-arrow-opacity': 0.04,
+        },
+      },
 
-    // ── Zoom ──────────────────────────────────────────
-    const zoom = d3
-      .zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.2, 4])
-      .on('zoom', (event) => {
-        g.attr('transform', event.transform.toString());
-      });
+      // ── Edgehandles styles ──
+      {
+        selector: '.eh-handle',
+        style: {
+          'background-color': '#22d3ee',
+          'width': 12,
+          'height': 12,
+          'border-width': 0,
+          'label': '',
+        },
+      },
+      {
+        selector: '.eh-preview',
+        style: {
+          'line-color': '#22d3ee',
+          'line-opacity': 0.5,
+          'target-arrow-color': '#22d3ee',
+          'line-style': 'dashed',
+        },
+      },
+    ];
 
-    svg.call(zoom);
+    // ── Determine layout ──────────────────────────────
+    // Always use the intended layout (fcose/concentric) but seed positions from savedPositions
+    // so the layout converges quickly from previous positions, avoiding layout jumps
+    // while still producing the correct layout for the current mode.
+    const hasSavedPositions = Object.keys(savedPositions).length > 0;
+
+    const layoutOpts: any = {
+      name: selectedId ? 'concentric' : 'fcose',
+      quality: 'default',
+      randomize: !hasSavedPositions, // only randomize on first render
+      animate: true,
+      animationDuration: hasSavedPositions ? 300 : 600, // faster when re-positioning
+      animationEasing: 'ease-in-out-cubic',
+      fit: true,
+      padding: 50,
+      // fcose-specific
+      ...(selectedId
+        ? {}
+        : {
+            nodeRepulsion: () => 45000,
+            idealEdgeLength: () => 250,
+            nodeSeparation: 200,
+          }),
+      // concentric-specific
+      ...(selectedId
+        ? {
+            concentric: (node: any) => {
+              if (node.data('id') === selectedId) return 10;
+              const conn = node.data('connType');
+              if (conn === 'bidirectional') return 7;
+              if (conn === 'outgoing' || conn === 'incoming') return 5;
+              if (localInDepthSet.has(node.data('id'))) return 3;
+              return 1;
+            },
+            levelWidth: (nodes: any) => nodes.length / 4,
+            spacingFactor: 1.2,
+            startAngle: -Math.PI / 2,
+          }
+        : {}),
+    };
+
+    // ── Create Cytoscape instance ──────────────────────
+    const cy = cytoscape({
+      container: containerRef.current,
+      elements,
+      style: stylesheet,
+      layout: layoutOpts,
+      minZoom: 0.2,
+      maxZoom: 4,
+      wheelSensitivity: 0.3,
+      boxSelectionEnabled: false,
+    });
+
+    cyRef.current = cy;
+
+    // ── Edgehandles (disabled by default, activated via Shift key) ──
+    const eh = cy.edgehandles({
+      enabled: false,
+      canConnect: (sourceNode: any, targetNode: any) => {
+        return sourceNode.id() !== targetNode.id();
+      },
+      edgeParams: () => ({
+        data: {
+          severity: 1,
+          direction: 'default',
+          isConnected: 'false',
+          bothInD: 'true',
+          hasSel: state.selectedPersonId ? 'true' : 'false',
+        },
+      }),
+      hoverDelay: 150,
+      snap: true,
+      snapThreshold: 30,
+      snapFrequency: 50,
+      noEdgeEventsInDraw: true,
+      disableBrowserGestures: true,
+    });
+
+    ehRef.current = eh;
+
+    // Toggle edgehandles with Shift key
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Shift' && ehRef.current) ehRef.current.enableDrawMode();
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Shift' && ehRef.current) ehRef.current.disableDrawMode();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+
+    // Persist edges created via edgehandles to the store
+    cy.on('ehcomplete', (_evt: any, sourceNode: any, targetNode: any, addedEdge: any) => {
+      if (addedEdge) {
+        dispatch({
+          type: 'ADD_CONNECTION',
+          sourceId: sourceNode.id(),
+          targetId: targetNode.id(),
+          categories: [] as any[],
+          severity: 1,
+          notes: '',
+        });
+      }
+    });
+
+    // ── Register zoom controls ─────────────────────────
     zoomRef.current = {
       zoomIn: () => {
-        const svgEl = svgRef.current;
-        if (!svgEl) return;
-        d3.select(svgEl).transition().duration(300).call(zoom.scaleBy, 1.4);
+        cy.zoom({ level: Math.min(cy.zoom() * 1.4, 4), renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } });
       },
       zoomOut: () => {
-        const svgEl = svgRef.current;
-        if (!svgEl) return;
-        d3.select(svgEl).transition().duration(300).call(zoom.scaleBy, 0.7);
+        cy.zoom({ level: Math.max(cy.zoom() * 0.7, 0.2), renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } });
       },
       resetZoom: () => {
-        const svgEl = svgRef.current;
-        if (!svgEl) return;
-        d3.select(svgEl).transition().duration(500).call(
-          zoom.transform,
-          d3.zoomIdentity.translate(width / 2, height / 2).scale(1)
-        );
+        cy.fit(undefined, 50);
       },
     };
 
-    svg.call(
-      zoom.transform,
-      d3.zoomIdentity.translate(width / 2, height / 2).scale(1)
-    );
-
-    // ── Force simulation ───────────────────────────────
-    const simulation = d3
-      .forceSimulation<SimNode>(nodes)
-      .force(
-        'link',
-        d3
-          .forceLink<SimNode, SimLink>(links)
-          .id((d) => d.id)
-          .distance(180)
-          .strength(0.4)
-      )
-      .force('charge', d3.forceManyBody().strength(-700))
-      .force('center', d3.forceCenter(0, 0))
-      .force('collision', d3.forceCollide().radius(55));
-
-    if (hasCachedPositions) {
-      simulation.alpha(0.05).restart();
-    }
-
-    // ── Draw links as curved paths ─────────────────────
-    const linkPath = g
-      .append('g')
-      .attr('class', 'links')
-      .selectAll('path')
-      .data(links)
-      .join('path')
-      .attr('fill', 'none')
-      .attr('stroke', (d) => getEdgeColor(d.severity))
-      .attr('stroke-width', (d) => 1 + d.severity * 0.4)
-      .attr('marker-end', (d) => `url(#arrow-${d.severity})`)
-      .attr('stroke-linecap', 'round');
-
-    // ── Draw nodes ─────────────────────────────────────
-    const nodeGroup = g
-      .append('g')
-      .attr('class', 'nodes')
-      .selectAll<SVGGElement, SimNode>('g')
-      .data(nodes)
-      .join('g')
-      .attr('cursor', 'grab')
-      .call(
-        d3
-          .drag<SVGGElement, SimNode>()
-          .on('start', (event, d) => {
-            if (!event.active) simulation.alphaTarget(0.3).restart();
-            d.fx = d.x;
-            d.fy = d.y;
-          })
-          .on('drag', (event, d) => {
-            d.fx = event.x;
-            d.fy = event.y;
-          })
-          .on('end', (event, d) => {
-            if (!event.active) simulation.alphaTarget(0);
-            d.fx = null;
-            d.fy = null;
-          })
-      );
-
-    // Outer ring — thin colored border
-    nodeGroup
-      .append('circle')
-      .attr('class', 'node-ring')
-      .attr('r', 22)
-      .attr('fill', 'transparent')
-      .attr('stroke', (d) => d.avatarColor)
-      .attr('stroke-width', 1.5)
-      .attr('stroke-opacity', 0.4);
-
-    // Inner fill — subtle tinted background
-    nodeGroup
-      .append('circle')
-      .attr('class', 'node-fill')
-      .attr('r', 22)
-      .attr('fill', (d) => d.avatarColor)
-      .attr('fill-opacity', 0.08);
-
-    // Initials text
-    nodeGroup
-      .append('text')
-      .attr('class', 'node-initials')
-      .text((d) => d.initials)
-      .attr('text-anchor', 'middle')
-      .attr('dy', '0.35em')
-      .attr('fill', (d) => d.avatarColor)
-      .attr('font-size', '12px')
-      .attr('font-weight', '600')
-      .attr('font-family', "'JetBrains Mono', 'SF Mono', monospace")
-      .attr('pointer-events', 'none');
-
-    // First name label — shown only for selected/connected nodes
-    nodeGroup
-      .append('text')
-      .attr('class', 'node-label')
-      .text((d) => d.name.split(' ')[0])
-      .attr('text-anchor', 'middle')
-      .attr('dy', '38px')
-      .attr('fill', '#a1a1aa')
-      .attr('font-size', '10px')
-      .attr('font-weight', '500')
-      .attr('font-family', "'Manrope', sans-serif")
-      .attr('pointer-events', 'none')
-      .attr('opacity', 0); // hidden by default
-
-    // Hover area (invisible, larger hit target)
-    nodeGroup
-      .append('circle')
-      .attr('r', 30)
-      .attr('fill', 'transparent')
-      .attr('cursor', 'grab');
-
-    // ── Click handlers ─────────────────────────────────
-    nodeGroup.on('click', (_event, d) => {
-      _event.stopPropagation();
-      dispatch({ type: 'SELECT_PERSON', personId: d.id });
+    // ── Node click → select person ─────────────────────
+    cy.on('tap', 'node', (evt) => {
+      const nodeId = evt.target.id();
+      dispatch({ type: 'SELECT_PERSON', personId: nodeId });
     });
 
-    svg.on('click', () => {
-      dispatch({ type: 'SELECT_PERSON', personId: null });
+    // Click background → deselect
+    cy.on('tap', (evt) => {
+      if (evt.target === cy) {
+        dispatch({ type: 'SELECT_PERSON', personId: null });
+      }
     });
 
-    // ── Selection state + trail animation ──────────────
-    const updateVisualState = () => {
-      const hasSelection = state.selectedPersonId !== null;
+    // ── Update overlay positions on viewport/position changes ──
+    cy.on('viewport dragfree', () => updateOverlayPositions());
+    // Also update during layout animation
+    const layoutInterval = setInterval(() => updateOverlayPositions(), 50);
+    cy.one('layoutstop', () => {
+      clearInterval(layoutInterval);
+      updateOverlayPositions();
+    });
 
-      // Node visual state
-      nodeGroup.each(function (d) {
-        const isSelected = state.selectedPersonId === d.id;
-        const isWithinDepth = !hasSelection || inDepthSet.has(d.id);
-        const el = d3.select(this);
-
-        // Ring
-        el.select('.node-ring')
-          .attr('stroke-opacity', isSelected ? 1 : isWithinDepth ? 0.4 : 0.06)
-          .attr('stroke-width', isSelected ? 2.5 : 1.5)
-          .attr('filter', isSelected ? 'url(#pulse-glow)' : 'none');
-
-        // Fill
-        el.select('.node-fill')
-          .attr('fill-opacity', isSelected ? 0.2 : isWithinDepth ? 0.08 : 0.02);
-
-        // Initials
-        el.select('.node-initials')
-          .attr('opacity', isWithinDepth ? 1 : 0.1);
-
-        // Name label — show for selected + connected nodes
-        el.select('.node-label')
-          .attr('opacity', isSelected || (isWithinDepth && hasSelection) ? 1 : 0);
-      });
-
-      // Link visual state + animated trails for connected edges
-      linkPath.each(function (d) {
-        const sourceId = (d.source as SimNode).id;
-        const targetId = (d.target as SimNode).id;
-        const isConnected = hasSelection && (sourceId === state.selectedPersonId || targetId === state.selectedPersonId);
-        const bothInDepth = inDepthSet.has(sourceId) && inDepthSet.has(targetId);
-        const el = d3.select(this);
-
-        if (isConnected) {
-          // Animated trail: flowing dashes along the path
-          el.attr('stroke-opacity', 0.85)
-            .attr('stroke-dasharray', '6 4')
-            .classed('trail-active', true);
-        } else if (bothInDepth && hasSelection) {
-          el.attr('stroke-opacity', 0.25)
-            .attr('stroke-dasharray', 'none')
-            .classed('trail-active', false);
-        } else if (hasSelection) {
-          el.attr('stroke-opacity', 0.04)
-            .attr('stroke-dasharray', 'none')
-            .classed('trail-active', false);
-        } else {
-          // No selection — all edges visible, no animation
-          el.attr('stroke-opacity', 0.4)
-            .attr('stroke-dasharray', 'none')
-            .classed('trail-active', false);
+    // ── Animated marching-ant dash offset ──────────────
+    let dashOffset = 0;
+    const animInterval = setInterval(() => {
+      dashOffset -= 1;
+      cy.edges().forEach((edge) => {
+        const dir = edge.data('direction');
+        if (dir === 'outgoing' || dir === 'incoming') {
+          (edge as any).style('line-dash-offset', dashOffset);
         }
       });
-    };
+    }, 50);
 
-    updateVisualState();
-
-    // ── Bézier curve path generator ─────────────────────
-    // Computes a curved path between source and target
-    const linkPathGenerator = (d: SimLink) => {
-      const source = d.source as SimNode;
-      const target = d.target as SimNode;
-      const dx = (target.x ?? 0) - (source.x ?? 0);
-      const dy = (target.y ?? 0) - (source.y ?? 0);
-      const dr = Math.max(Math.sqrt(dx * dx + dy * dy) / Math.abs(d.curvature || 0.15), 200);
-
-      // Sweep flag determines which side the curve arcs toward
-      const sweep = d.curvature > 0 ? 1 : 0;
-
-      return `M${source.x ?? 0},${source.y ?? 0}A${dr},${dr} 0 0,${sweep} ${target.x ?? 0},${target.y ?? 0}`;
-    };
-
-    // ── Tick update ────────────────────────────────────
-    simulation.on('tick', () => {
-      nodes.forEach((n) => {
-        if (n.x != null && n.y != null) {
-          positionCache.set(n.id, { x: n.x, y: n.y });
-        }
-      });
-
-      // Update curved paths
-      linkPath.attr('d', linkPathGenerator);
-
-      nodeGroup.attr('transform', (d) => `translate(${d.x ?? 0}, ${d.y ?? 0})`);
-    });
-
+    // ── Cleanup ────────────────────────────────────────
     return () => {
-      simulation.stop();
+      // Save node positions before destroying to preserve layout across re-renders
+      const positions: Record<string, { x: number; y: number }> = {};
+      cy.nodes().forEach((node) => {
+        const pos = node.position();
+        positions[node.id()] = { x: pos.x, y: pos.y };
+      });
+      savedPositionsRef.current = positions;
+
+      clearInterval(animInterval);
+      clearInterval(layoutInterval);
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current);
+      eh.destroy();
+      cy.destroy();
+      cyRef.current = null;
+      ehRef.current = null;
       zoomRef.current = null;
     };
-  }, [state.people, dimensions, state.networkDepth, state.selectedPersonId, dispatch, getEdgeColor]);
+  }, [state.people, dimensions, state.networkDepth, state.selectedPersonId, dispatch, peopleMap, updateOverlayPositions]);
+
+  const selectedId = state.selectedPersonId;
 
   return (
-    <div ref={containerRef} className="network-graph-container">
-      <svg ref={svgRef} className="network-graph-svg" />
+    <div className="network-graph-container">
+      <div ref={containerRef} className="network-graph-cytoscape" />
+
+      {/* Name label overlay — positioned below each Cytoscape node */}
+      <div className="network-graph-overlay">
+        {state.people.map((p) => {
+          const nd = nodeLabelData[p.id];
+          if (!nd) return null;
+          const inD = !selectedId || inDepthSet.has(p.id);
+          const isSelected = p.id === selectedId;
+          const showLabel = inD || isSelected;
+
+          return (
+            <div
+              key={p.id}
+              className="node-name-label"
+              style={{
+                left: nd.x,
+                top: nd.y + nd.h / 2 + 6, // scales with zoom since renderedHeight scales
+                opacity: showLabel ? (selectedId ? 0.85 : 0.75) : 0,
+              }}
+            >
+              {p.name.split(' ')[0]}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Direction legend — shown when a node is selected */}
+      {selectedId && (
+        <div className="direction-legend">
+          <div className="legend-row">
+            <span className="legend-line outgoing-line" />
+            <span className="legend-text outgoing-text">HAS ON THEM →</span>
+          </div>
+          <div className="legend-row">
+            <span className="legend-line incoming-line" />
+            <span className="legend-text incoming-text">THEY HAVE ON ←</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

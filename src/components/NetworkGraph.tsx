@@ -164,8 +164,9 @@ export default function NetworkGraph() {
             : 'default'
           : 'default';
 
+        const isDirect = selectedId !== null && (person.id === selectedId || entry.targetId === selectedId);
         const bothInD = localInDepthSet.has(person.id) && localInDepthSet.has(entry.targetId);
-        const isConnected = selectedId !== null && (person.id === selectedId || entry.targetId === selectedId);
+        const isConnected = isDirect;
 
         edgeData.push({
           id: entry.id, // use the leverage entry's own id — unique, stable
@@ -186,13 +187,13 @@ export default function NetworkGraph() {
   // ── Stylesheet ─────────────────────────────────────
   const buildStylesheet = useCallback((hasSel: boolean) => {
     const dimRule = hasSel ? `
-      edge[hasSel='true'][isConnected='true'][direction='default'] {
+      edge[hasSel='true'][direction='default'][isConnected='true'] {
         line-opacity: 0.25;
       }
-      edge[hasSel='true'][bothInD='true'][isConnected='false'] {
+      edge[hasSel='true'][direction='default'][bothInD='true'][isConnected='false'] {
         line-opacity: 0.15;
       }
-      edge[hasSel='true'][bothInD='false'][isConnected='false'] {
+      edge[hasSel='true'][direction='default'][bothInD='false'][isConnected='false'] {
         line-opacity: 0.04;
         target-arrow-opacity: 0.04;
       }

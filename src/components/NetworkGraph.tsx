@@ -31,29 +31,30 @@ export default function NetworkGraph() {
   const [nodeLabelData, setNodeLabelData] = useState<Record<string, { x: number; y: number; h: number }>>({});
   const { zoomRef } = useZoomContext();
 
-  // Memoized people map
-  const peopleMap = useMemo(
-    () => new Map(state.people.map((p) => [p.id, p])),
-    [state.people]
-  );
-
-  // Compute depth set
+  // Compute depth set — canonical BFS using only hasOnOthers (same as buildData)
   const inDepthSet = useMemo(() => {
     const s = new Set<string>();
     const selectedId = state.selectedPersonId;
     if (!selectedId) return s;
+
+    // Build outgoing map from all people
+    const outgoingMap = new Map<string, Set<string>>();
+    for (const p of state.people) {
+      outgoingMap.set(p.id, new Set(p.hasOnOthers.map((e) => e.targetId)));
+    }
+
     const addReachable = (personId: string, hopsRemaining: number) => {
       if (s.has(personId) || hopsRemaining < 0) return;
       s.add(personId);
       if (hopsRemaining === 0) return;
-      const person = peopleMap.get(personId);
-      if (!person) return;
-      for (const entry of person.hasOnOthers) addReachable(entry.targetId, hopsRemaining - 1);
-      for (const entry of person.othersHaveOnThem) addReachable(entry.targetId, hopsRemaining - 1);
+      const outTargets = outgoingMap.get(personId);
+      if (outTargets) {
+        for (const t of outTargets) addReachable(t, hopsRemaining - 1);
+      }
     };
     addReachable(selectedId, state.networkDepth);
     return s;
-  }, [state.selectedPersonId, state.networkDepth, peopleMap]);
+  }, [state.selectedPersonId, state.networkDepth, state.people]);
 
   // Update name overlay positions
   const rafIdRef = useRef<number>(0);
@@ -73,44 +74,61 @@ export default function NetworkGraph() {
   }, []);
 
   // ── Build data classification (reusable) ───────────
+  // Canonical graph model: edges come ONLY from hasOnOthers.
+  // We derive incoming relationships by reversing that map.
+  // This ensures nodes and edges are always classified from the same source.
   const buildData = useCallback(() => {
     const selectedId = state.selectedPersonId;
     const allPeople = state.people;
 
+    // Build outgoing map: sourceId -> targetId set
+    const outgoingMap = new Map<string, Set<string>>();
+    for (const p of allPeople) {
+      outgoingMap.set(p.id, new Set(p.hasOnOthers.map((e) => e.targetId)));
+    }
+
+    // Build incoming map: targetId -> sourceId set (derived from hasOnOthers)
+    const incomingMap = new Map<string, Set<string>>();
+    for (const p of allPeople) {
+      for (const entry of p.hasOnOthers) {
+        if (!incomingMap.has(entry.targetId)) incomingMap.set(entry.targetId, new Set());
+        incomingMap.get(entry.targetId)!.add(p.id);
+      }
+    }
+
+    // BFS from selected person using ONLY the hasOnOthers canonical graph
     const localInDepthSet = new Set<string>();
     if (selectedId) {
       const addReachable = (personId: string, hopsRemaining: number) => {
         if (localInDepthSet.has(personId) || hopsRemaining < 0) return;
         localInDepthSet.add(personId);
         if (hopsRemaining === 0) return;
-        const person = peopleMap.get(personId);
-        if (!person) return;
-        for (const entry of person.hasOnOthers) addReachable(entry.targetId, hopsRemaining - 1);
-        for (const entry of person.othersHaveOnThem) addReachable(entry.targetId, hopsRemaining - 1);
+        const outTargets = outgoingMap.get(personId);
+        if (outTargets) {
+          for (const t of outTargets) addReachable(t, hopsRemaining - 1);
+        }
       };
       addReachable(selectedId, state.networkDepth);
     }
 
+    // Connection type map for node coloring
     const connectionTypeMap = new Map<string, 'outgoing' | 'incoming' | 'bidirectional' | 'none'>();
     if (selectedId) {
-      const sp = peopleMap.get(selectedId);
-      if (sp) {
-        const outIds = new Set(sp.hasOnOthers.map((e) => e.targetId));
-        const inIds = new Set(sp.othersHaveOnThem.map((e) => e.targetId));
-        for (const p of allPeople) {
-          if (p.id === selectedId) continue;
-          const isOut = outIds.has(p.id);
-          const isIn = inIds.has(p.id);
-          connectionTypeMap.set(p.id, isOut && isIn ? 'bidirectional' : isOut ? 'outgoing' : isIn ? 'incoming' : 'none');
-        }
+      const outIds = outgoingMap.get(selectedId) ?? new Set();
+      const inIds = incomingMap.get(selectedId) ?? new Set();
+      for (const p of allPeople) {
+        if (p.id === selectedId) continue;
+        const isOut = outIds.has(p.id);
+        const isIn = inIds.has(p.id);
+        connectionTypeMap.set(p.id, isOut && isIn ? 'bidirectional' : isOut ? 'outgoing' : isIn ? 'incoming' : 'none');
       }
     }
 
-    const pairEdgeCount = new Map<string, number>();
     const nodeData: Record<string, any> = {};
     const edgeData: any[] = [];
 
-    allPeople.forEach((p) => {
+    // Node data
+    for (const p of allPeople) {
       const connType = selectedId ? (connectionTypeMap.get(p.id) ?? 'none') : 'default';
       const isSel = p.id === selectedId;
       const inD = !selectedId || localInDepthSet.has(p.id);
@@ -121,25 +139,22 @@ export default function NetworkGraph() {
         isSel: isSel ? 'true' : 'false',
         inD: inD ? 'true' : 'false',
       };
-    });
+    }
 
-    allPeople.forEach((person) => {
-      person.hasOnOthers.forEach((entry) => {
-        const pairKey = [person.id, entry.targetId].sort().join('-');
-        const edgeIdx = pairEdgeCount.get(pairKey) ?? 0;
-        pairEdgeCount.set(pairKey, edgeIdx + 1);
-
-        let direction = 'default';
-        if (selectedId) {
-          if (person.id === selectedId) direction = 'outgoing';
-          else if (entry.targetId === selectedId) direction = 'incoming';
-        }
+    // Edge data — each leverage entry becomes an edge using entry.id as the edge id
+    for (const person of allPeople) {
+      for (const entry of person.hasOnOthers) {
+        const direction = selectedId
+          ? person.id === selectedId ? 'outgoing'
+            : entry.targetId === selectedId ? 'incoming'
+            : 'default'
+          : 'default';
 
         const bothInD = localInDepthSet.has(person.id) && localInDepthSet.has(entry.targetId);
         const isConnected = selectedId !== null && (person.id === selectedId || entry.targetId === selectedId);
 
         edgeData.push({
-          id: `${person.id}->${entry.targetId}-${edgeIdx}`,
+          id: entry.id, // use the leverage entry's own id — unique, stable
           source: person.id,
           target: entry.targetId,
           severity: entry.severity,
@@ -148,11 +163,11 @@ export default function NetworkGraph() {
           bothInD: bothInD ? 'true' : 'false',
           hasSel: selectedId ? 'true' : 'false',
         });
-      });
-    });
+      }
+    }
 
     return { nodeData, edgeData, hasSel: !!selectedId };
-  }, [state.selectedPersonId, state.networkDepth, state.people, peopleMap]);
+  }, [state.selectedPersonId, state.networkDepth, state.people]);
 
   // ── Stylesheet ─────────────────────────────────────
   const buildStylesheet = useCallback((hasSel: boolean) => {

@@ -164,9 +164,8 @@ export default function NetworkGraph() {
             : 'default'
           : 'default';
 
-        const isDirect = selectedId !== null && (person.id === selectedId || entry.targetId === selectedId);
         const bothInD = localInDepthSet.has(person.id) && localInDepthSet.has(entry.targetId);
-        const isConnected = isDirect;
+        const isConnected = selectedId !== null && (person.id === selectedId || entry.targetId === selectedId);
 
         edgeData.push({
           id: entry.id, // use the leverage entry's own id — unique, stable

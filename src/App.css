@@ -1003,6 +1003,33 @@
 /* ============================
    AI CHAT
    ============================ */
+.ai-status-dot {
+  position: fixed;
+  bottom: 64px;
+  right: 20px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  z-index: 199;
+  transition: background 0.3s;
+  opacity: 0;
+}
+
+.ai-status-dot.active {
+  opacity: 1;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.ai-spinner {
+  animation: spin 0.8s linear infinite;
+}
+
 .ai-float-btn {
   position: fixed;
   bottom: 20px;
@@ -1075,6 +1102,61 @@
   font-size: 12px;
   font-weight: 600;
   color: var(--text-primary);
+}
+
+.ai-chat-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.ai-chat-clear,
+.ai-chat-stop {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  transition: all var(--transition-fast);
+}
+
+.ai-chat-clear:hover,
+.ai-chat-stop:hover {
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+}
+
+.ai-hint-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 12px;
+}
+
+.ai-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.ai-hint:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-muted);
+}
+
+.ai-hint-icon {
+  font-size: 13px;
 }
 
 .ai-chat-close {

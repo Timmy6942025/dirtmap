@@ -169,6 +169,7 @@ export default function RightPanel() {
           onClick={() => {
             dispatch({ type: 'SET_RIGHT_PANEL', open: false });
             dispatch({ type: 'SELECT_PERSON', personId: null });
+            dispatch({ type: 'SELECT_EDGE', edgeId: null });
           }}
         >
           <svg width={`16`} height={`16`} viewBox={`0 0 24 24`} fill={`none`} stroke={`currentColor`} strokeWidth={`2`}>

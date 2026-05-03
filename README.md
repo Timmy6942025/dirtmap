@@ -1,71 +1,112 @@
 # Dirtmap
 
-A React + TypeScript network visualization tool with an AI-powered chat assistant. Explore leverage relationships between people through an interactive Cytoscape graph, and use AI to analyze connections and suggest new ones.
+## Network Contagion Analysis
 
-## Features
+Dirtmap maps leverage and influence relationships across networks and tracks their propagation. The platform quantifies exposure, visualizes spreading chains of compromise, and maintains a leaderboard ranking the most connected and most vulnerable nodes.
 
-- **Interactive Network Graph** — Visualize people and their leverage relationships using Cytoscape with force-directed layout
-- **AI Chat Assistant** — Powered by OpenRouter (via the official `@openrouter/sdk`), with streaming responses and reasoning token display
-- **Smart Connection Analysis** — AI can analyze the graph and suggest new connections based on existing relationships
-- **Detailed Person Profiles** — Click any node to see full leverage entries (outgoing and incoming) in the right panel
-- **Edge Inspector** — Click any connector to highlight the source person and their relevant leverage entry
-- **Zoom & Pan Controls** — Navigate large graphs with dedicated zoom buttons and mousewheel support
+### Overview
 
-## Tech Stack
+Dirtmap converts relationship data into a directed graph where edges represent leverage and nodes represent individuals. As the network evolves, the system tracks how exposure propagates through chains of influence and ranks nodes by their position in these contagion pathways.
 
-- **Frontend:** React 19, TypeScript, Vite, Cytoscape
-- **Backend:** Express, TypeScript, `@openrouter/sdk`
-- **AI:** OpenRouter API (model: `openrouter/owl-alpha`)
+### Capabilities
 
-## Development
+- **Graph Visualization** — Render directed leverage relationships using force-directed layout. Nodes represent individuals; edges represent asymmetric influence or exposure.
+
+- **Propagation Tracking** — Observe how leverage spreads through multi-hop chains. Identify secondary and tertiary exposure as relationships compound.
+
+- **Leaderboard Metrics** — Rank nodes by:
+  - Total leverage held (out-degree in the leverage graph)
+  - Total exposure received (in-degree)
+  - Centrality and propagation potential
+  - Changes in rank as the network evolves
+
+- **Node Inspection** — Select any individual to view incoming and outgoing leverage relationships with full attribution.
+
+- **Edge Tracing** — Select any directed edge to highlight its source node and the specific leverage relationship that defines it.
+
+- **AI Analysis** — Query an LLM assistant trained on the current graph state to identify high-leverage nodes, predict propagation paths, and simulate cascade scenarios.
+
+- **Scenario Forecasting** — Use the AI model to identify which exposed relationships, if triggered, would produce the widest propagation through the network.
+
+- **Navigation** — Zoom and pan controls for exploring dense networks. Depth controls limit display to immediate neighborhoods or expand to full propagation chains.
+
+---
+
+## Quick Start
+
+### Prerequisites
+
+An OpenRouter API key is required for AI analysis features. Register at [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys).
+
+### Installation
 
 ```bash
 # Install dependencies
 npm install
 
-# Start both frontend and backend dev servers
+# Configure API key
+echo "OPENROUTER_API_KEY=your_key_here" > .env
+echo "VITE_SITE_URL=http://localhost:5173" >> .env
+
+# Start the application
 npm run dev
-
-# Or start them separately
-npm run dev:frontend   # Vite on :5173
-npm run dev:server     # Express on :3001
 ```
 
-## Configuration
+Application endpoints:
+- **Frontend:** http://localhost:5173
+- **Backend:** http://localhost:3001
 
-Create a `.env` file in the project root:
+### Alternative Startup
 
+```bash
+npm run dev:frontend   # Vite dev server on :5173
+npm run dev:server     # Express backend on :3001
 ```
-OPENROUTER_API_KEY=your_key_here
-VITE_SITE_URL=http://localhost:5173
-```
 
-Get an API key at [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys).
+---
 
-## Project Structure
+## Technical Details
+
+### Architecture
+
+- **Frontend:** React 19, TypeScript, Vite, Cytoscape.js for graph rendering
+- **Backend:** Express, TypeScript, `@openrouter/sdk` for AI integration
+- **AI Provider:** OpenRouter API (default model: `openrouter/owl-alpha`)
+- **State Management:** React Context for graph state and viewport state
+
+### Project Structure
 
 ```
 server/
-  index.ts              # Express backend — OpenRouter SDK proxy
+  index.ts              # Express backend — OpenRouter proxy, SSE streaming
 src/
   components/
-    AIChat.tsx          # AI chat panel with reasoning display
-    LeftSidebar.tsx     # Person list and graph controls
-    NetworkGraph.tsx    # Cytoscape graph visualization
-    RightPanel.tsx      # Person detail / leverage inspector
-    TopNavBar.tsx       # Header with title and depth controls
-    ZoomControls.tsx    # Zoom in/out/reset buttons
+    AIChat.tsx          # LLM chat interface with reasoning tokens
+    LeftSidebar.tsx     # Node list, controls, leaderboard
+    NetworkGraph.tsx    # Cytoscape.js visualization
+    RightPanel.tsx      # Node detail and edge inspector
+    TopNavBar.tsx       # Title, depth controls
+    ZoomControls.tsx    # Zoom and pan controls
   data/
-    mockData.ts         # Sample people and leverage data
+    mockData.ts         # Sample node and edge data
   hooks/
-    useAIChat.ts        # Chat state management + streaming
+    useAIChat.ts        # Chat state and streaming handler
   services/
-    ai.ts               # SSE stream parser for OpenRouter
+    ai.ts               # OpenRouter SSE parser
   store/
-    NetworkContext.tsx  # Graph state and CRUD operations
-    ZoomContext.tsx     # Zoom/pan state
+    NetworkContext.tsx  # Graph state, CRUD operations
+    ZoomContext.tsx     # Viewport state management
   types/
     index.ts            # Shared TypeScript interfaces
   utils/
-    parseCategories.ts  # Category string parsing utilities
+    parseCategories.ts  # Category parsing utilities
+```
+
+### Configuration
+
+Create `.env` in the project root:
+
+```bash
+OPENROUTER_API_KEY=your_key_here
+VITE_SITE_URL=http://localhost:5173
 ```
